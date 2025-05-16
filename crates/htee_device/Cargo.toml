@@ -1,0 +1,8 @@
+[package]
+name = "htee_device"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fdt = { path = "./fdt" }
+bitflags = { workspace = true }

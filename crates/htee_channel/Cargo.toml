@@ -1,0 +1,11 @@
+[package]
+name = "htee_channel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+htee_vstack = { path = "../htee_vstack"}
+sbi = { path = "../sbi"}
+heapless = { workspace = true }
+htee_device = { workspace = true }
+elf = { path = "../elf" }

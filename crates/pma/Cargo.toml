@@ -1,0 +1,11 @@
+[package]
+name = "pma"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+riscv = { workspace = true }
+bit_field = { workspace = true }
+vm = { path = "../vm" }
+htee_console = { path = "../htee_console" }
+nostd-rbtree = { path = "../nostd-rbtree" }

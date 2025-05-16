@@ -1,0 +1,19 @@
+[package]
+name = "fw-sm"
+version = "0.1.0"
+
+[dependencies]
+
+sm = { path = "../../crates/sm" }
+sbi = { path = "../../crates/sbi" }
+htee_channel = { path = "../../crates/htee_channel" }
+htee_console = { path = "../../crates/htee_console"}
+htee_device = {path = "../../crates/htee_device"}
+htee_macro = { path = "../../crates/htee_macro" }
+pma = { path = "../../crates/pma" }
+pmp = { path = "../../crates/pmp" }
+
+fdt = "0.1.5"
+
+riscv = { workspace = true }
+spin = "0.9.8"

@@ -1,0 +1,12 @@
+[package]
+name = "nostd-rbtree"
+version = "0.2.0"
+authors = ["tickbh <tickdream125@hotmail.com>"]
+description = "the nostd version rbtree for Rust"
+license = "Apache-2.0/MIT"
+documentation = "https://docs.rs/rbtree"
+repository = "https://github.com/tickbh/rbtree-rs"
+readme = "README.md"
+keywords = ["HashMap", "RBTree", "rbtree"]
+
+[dev-dependencies]

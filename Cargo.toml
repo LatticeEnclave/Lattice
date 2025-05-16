@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "xtask",
+    "tests",
+    "firmware/*",
+    "crates/*",
+    "drivers/*", 
+]
+default-members = ["xtask"]
+resolver = "2"
+
+[workspace.dependencies]
+bit_field = "0.10.2"
+htee_device = { path = "crates/htee_device" }
+htee_console = { path = "crates/htee_console" }
+htee_channel = { path = "crates/htee_channel" }
+vm = { path = "crates/vm" }
+sbi = { path = "crates/sbi" }
+data_structure = { path = "crates/data_structure" }
+riscv = { path = "crates/riscv" }
+enclave = { path = "crates/enclave" }
+context = { path = "crates/context" }
+heapless = "0.8.0"
+bitflags = "2.9.0"
+spin = "0.9.8"
+bumpalo = "3.17.0"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[profile.dev]
+opt-level = 3
+debug = true
+lto = true
+
+[profile.release]
+lto = true

@@ -1,0 +1,27 @@
+[package]
+name = "rt"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# log = "0.4.20"
+sbi = { path = "../sbi" }
+vm = { path = "../vm" }
+data_structure = { path = "../data_structure" }
+elf-loader = {path = "../elf-loader"}
+xmas-elf = "0.8"
+htee_vstack = {path = "../htee_vstack"}
+load_module = {path = "../../crates/load_module"}
+# htee_console = { workspace = true }
+htee_device = { path = "../htee_device" }
+riscv = { workspace = true }
+spin = "0.9.8"
+thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
+# sbi-rt = { version = "0.0.2", features = ["legacy"] }
+buddy_system_allocator = "0.9.1"
+rand_core = {version = "0.6.4", default-features = false } 
+htee_channel = { workspace = true }
+elf = { path = "../elf" }
+uart = { path = "../../drivers/uart" }

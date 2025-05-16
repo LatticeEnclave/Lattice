@@ -1,0 +1,37 @@
+[package]
+name = "sm"
+version = "0.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["v1-20"]
+v1-11 = []
+v1-20 = []
+
+[dependencies]
+sbi = { path = "../sbi" }
+data_structure = { path = "../data_structure" }
+nostd-rbtree = { path = "../nostd-rbtree" }
+vm = { path = "../vm" }
+htee_channel = { path = "../htee_channel" }
+htee_macro = { path = "../htee_macro" }
+htee_device = { path = "../htee_device" }
+htee_console = { path = "../htee_console"}
+context = { workspace = true }
+enclave = { path = "../enclave" }
+fdt = "0.1.5"
+riscv = { workspace = true}
+# uart_16550 = "0.3"
+spin = "0.9.8"
+# log = "0.4.20"
+bit_field = "0.10.2"
+thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
+heapless = { workspace = true }
+extension = { path = "../extension" }
+pma = { path = "../pma" }
+clint = { path = "../clint" }
+hsm = { path = "../hsm" }
+pmp = { path = "../pmp" }
+mempool = { path = "../mempool" }

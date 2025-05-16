@@ -1,0 +1,12 @@
+[package]
+name = "pmp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+riscv = { workspace = true }
+heapless = { workspace = true }
+htee_console = { path = "../htee_console" }
+pma = { path = "../pma" }
+htee_macro = { path = "../htee_macro" }
+extension = { path = "../extension" }

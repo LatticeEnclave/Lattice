@@ -1,0 +1,9 @@
+[binary]
+path = "./testcode"
+
+[runtime]
+path = "./fw-rt.bin"
+
+[memory]
+size = "20m"
+shared_size = "16k"

@@ -1,0 +1,19 @@
+[package]
+name = "load_module"
+version = "0.1.0"
+edition = "2021"
+
+# [features]
+# default = ["std"]
+# std = []
+
+[dependencies]
+# log = { version = "0.4", default-features = false, optional = true }
+# env_logger = { version = "0.10", optional = true }
+xmas-elf = { version = "0.8", default-features = false }
+riscv = { workspace = true }
+spin = { workspace = true }
+# buddy_system_allocator = "0.9.1"
+# rand_core = { version = "0.6.4", default-features = false }
+htee_console = { workspace = true }
+elf = { path = "../elf" }

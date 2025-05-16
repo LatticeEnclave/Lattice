@@ -1,0 +1,22 @@
+[package]
+name = "enclave"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+data_structure = { workspace = true }
+htee_console = { workspace = true }
+htee_device = { workspace = true }
+htee_channel = { workspace = true }
+riscv = { workspace = true }
+vm = { workspace = true }
+sbi = { workspace = true }
+context = { workspace = true }
+extension = { path = "../extension" }
+pma = { path = "../pma" }
+pmp = { path = "../pmp" }
+clint = { path = "../clint" }
+hsm = { path = "../hsm" }
+perf = { path = "../perf" }
+spin = { workspace = true }
+md5 = { version = "0.7.0", default-features = false }
