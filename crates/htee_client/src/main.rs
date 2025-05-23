@@ -107,7 +107,7 @@ fn cli_create_lse(path: &str) {
     };
 
     println!("create enclave");
-    let eidx = create_lse(&load_info as *const _);
+    let (rc, eidx) = create_lse(&load_info as *const _);
     println!("lse created");
     println!("eidx: {eidx:#x}");
     // never stop

@@ -13,8 +13,8 @@ pub use {cache::Cache, cache::NwCache, cache::NwCacheExt};
 
 pub const MAX_PMP_COUNT: usize = 32;
 pub const PMP_COUNT: usize = usize_env_or!("PMP_COUNT", 16);
-// pub const PMP_INIT_COUNT: usize = 16;
-pub const PMP_GRAN: usize = usize_env_or!("PMP_GRAN", 11);
+// // pub const PMP_INIT_COUNT: usize = 16;
+// pub const PMP_GRAN: usize = usize_env_or!("PMP_GRAN", 11);
 pub const PMP_ADDR_BITS: usize = usize_env_or!("PMP_ADDR_BITS", 38);
 
 pub type Mode = riscv::register::Range;
@@ -43,21 +43,12 @@ pub fn reset_pmp_registers() {
 #[inline]
 pub fn iter_hps() -> impl Iterator<Item = PmpStatus> {
     (0..PMP_COUNT).map(|idx| PmpStatus::from_register(idx))
-    // core::iter::from_fn(move || {
-    //     let s = PmpStatus::from_register(i);
-    //     if idx > 0
-    // })
 }
 
 pub fn hps_from_regs() -> Vec<PmpStatus, PMP_COUNT> {
     let mut hps = Vec::new();
     let mut prev_pmp: Option<PmpStatus> = None;
     for i in 0..PMP_COUNT {
-        // let raw_cfg = pmpcfg(i).byte;
-        // let raw_addr = pmpaddr(i);
-        // log::trace!("raw_cfg: {raw_cfg:#b}");
-        // log::trace!("raw_addr: {raw_addr:#b}");
-
         let s = PmpStatus::from_register(i);
 
         if i > 0 && s.is_tor() {

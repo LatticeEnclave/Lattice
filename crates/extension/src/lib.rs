@@ -34,6 +34,8 @@ pub trait Extension<T> {
     fn update<O>(&self, f: impl FnOnce(&mut T) -> O) -> O;
 }
 
+// pub trait 
+
 pub struct EcallResult {
     pub proxy: ProxyResult,
     pub retval: usize,
@@ -83,7 +85,8 @@ pub trait Ecall<T> {
 
     fn call(
         &self,
-        sm: &T,
+        // sm: &T,
+        handler: &T,
         regs: &mut TrapRegs,
         func_id: usize,
         ext_id: usize,

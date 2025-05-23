@@ -45,6 +45,7 @@ impl ClintClient {
         self.clint = AtomicPtr::new(base as _);
     }
 
+    #[inline]
     pub fn send_ipi_other_harts(&self) {
         let clint = unsafe { &*self.clint.load(Ordering::Relaxed) };
         for i in 0..self.hart_num {

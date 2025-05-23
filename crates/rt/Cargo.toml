@@ -24,4 +24,4 @@ buddy_system_allocator = "0.9.1"
 rand_core = {version = "0.6.4", default-features = false } 
 htee_channel = { workspace = true }
 elf = { path = "../elf" }
-uart = { path = "../../drivers/uart" }
+uart = { path = "../uart" }

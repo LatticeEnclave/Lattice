@@ -17,6 +17,11 @@ pub enum SPP {
 }
 
 impl Sstatus {
+    #[inline]
+    pub fn bits(&self) -> usize {
+        self.bits
+    }
+
     /// Supervisor Interrupt Enable
     #[inline]
     pub fn sie(&self) -> bool {

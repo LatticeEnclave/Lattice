@@ -22,16 +22,17 @@ htee_console = { path = "../htee_console"}
 context = { workspace = true }
 enclave = { path = "../enclave" }
 fdt = "0.1.5"
-riscv = { workspace = true}
-# uart_16550 = "0.3"
+riscv = { workspace = true }
 spin = "0.9.8"
 # log = "0.4.20"
 bit_field = "0.10.2"
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
 heapless = { workspace = true }
-extension = { path = "../extension" }
+# extension = { path = "../extension" }
 pma = { path = "../pma" }
 clint = { path = "../clint" }
 hsm = { path = "../hsm" }
 pmp = { path = "../pmp" }
-mempool = { path = "../mempool" }
+trap_proxy = { path = "../trap_proxy" }
+platform = { path = "../platform" }
+md5 = { version = "0.7.0", default-features = false }

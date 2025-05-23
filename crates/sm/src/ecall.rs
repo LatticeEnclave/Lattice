@@ -1,40 +1,233 @@
-/// The adjustment of registers must be done in the call function.
-///
-pub mod pause_enclave {
-    use crate::hart;
-    use enclave::EnclaveIdx;
-    use htee_console::log;
-    use sbi::TrapRegs;
+use core::fmt::Display;
 
-    pub const ID: usize = sbi::ecall::SBISMEnclaveCall::SbiSMStopEnclave as usize;
+use sbi::TrapRegs;
+use trap_proxy::ProxyResult;
 
-    pub fn call(regs: &mut TrapRegs) {
-        log::debug!("Pause enclave");
-        let hs = hart::current();
-        regs.mepc += 0x4;
+use crate::SecMonitor;
 
-        // match hs.get_enc_ptr().unwrap().as_enclave() {
-        //     EnclaveRef::User(enclave) => {
-        //         // ecall instruction length
-        //         let rc = regs.a0;
-        //         enclave.enclave_ctx.save(regs);
-        //         unsafe {
-        //             *regs = enclave.host_ctx.restore();
-        //             regs.a0 = enclave.id().into();
-        //             regs.a1 = rc;
-        //         }
-        //     }
-        //     EnclaveRef::Driver(enclave) => unsafe {
-        //         enclave.enclave_ctx.save(regs);
-        //         let rc = regs.a0;
-        //         *regs = enclave.host_ctx.restore();
-        //         regs.a0 = enclave.id.into();
-        //         regs.a1 = rc;
-        //     },
-        // }
-        hs.set_enc(EnclaveIdx::HOST);
+const ERR_CODE_MASK: usize = !(1 << 63);
+
+#[derive(Debug)]
+#[repr(usize)]
+pub enum EcallError {
+    UnsupportedFunc = 0x1 | !ERR_CODE_MASK,
+    EcallRuntime(usize),
+}
+
+impl EcallError {
+    #[inline(always)]
+    pub fn code(code: usize) -> Self {
+        Self::EcallRuntime(code & ERR_CODE_MASK)
     }
 }
+
+impl Display for EcallError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::UnsupportedFunc => write!(f, "Unsupported function"),
+            Self::EcallRuntime(code) => write!(f, "Error in handling ecall: {}", code),
+        }
+    }
+}
+
+pub struct EcallResult {
+    pub proxy: ProxyResult,
+    pub retval: usize,
+    pub fixed_epc: bool,
+}
+
+impl EcallResult {
+    #[allow(unused)]
+    #[inline(always)]
+    pub fn forward() -> Self {
+        Self {
+            proxy: ProxyResult::Continue,
+            retval: 0,
+            fixed_epc: false,
+        }
+    }
+
+    #[inline(always)]
+    pub fn ret() -> Self {
+        Self {
+            proxy: ProxyResult::Return,
+            retval: 0,
+            fixed_epc: false,
+        }
+    }
+
+    #[inline(always)]
+    pub fn retval(mut self, retval: usize) -> Self {
+        self.retval = retval;
+        self
+    }
+
+    #[inline(always)]
+    pub fn fixed_epc(mut self) -> Self {
+        self.fixed_epc = true;
+        self
+    }
+}
+
+pub trait HandleEcall {
+    fn able(&self, funcid: usize, extid: usize) -> bool;
+
+    fn call(&self, sm: &SecMonitor, regs: &mut TrapRegs) -> Result<EcallResult, EcallError>;
+}
+
+impl HandleEcall for () {
+    #[inline]
+    fn able(&self, _: usize, _: usize) -> bool {
+        false
+    }
+
+    fn call(&self, _: &SecMonitor, _: &mut TrapRegs) -> Result<EcallResult, EcallError> {
+        unimplemented!()
+    }
+}
+
+pub struct EcallHandler<H, F>
+where
+    H: HandleEcall,
+    F: Fn(&SecMonitor, &mut TrapRegs) -> Result<EcallResult, EcallError>,
+{
+    extid: usize,
+    funcid: usize,
+    f: F,
+    other: H,
+}
+
+impl<H, F> HandleEcall for EcallHandler<H, F>
+where
+    H: HandleEcall,
+    F: Fn(&SecMonitor, &mut TrapRegs) -> Result<EcallResult, EcallError>,
+{
+    #[inline]
+    fn able(&self, func_id: usize, ext_id: usize) -> bool {
+        (func_id == self.funcid && ext_id == self.extid) || self.other.able(func_id, ext_id)
+    }
+
+    #[inline]
+    fn call(&self, sm: &SecMonitor, regs: &mut TrapRegs) -> Result<EcallResult, EcallError> {
+        if regs.a6 == self.funcid && regs.a7 == self.extid {
+            (self.f)(sm, regs)
+        } else if self.other.able(regs.a6, regs.a7) {
+            self.other.call(sm, regs)
+        } else {
+            Err(EcallError::UnsupportedFunc)
+        }
+    }
+}
+
+impl<H, F> EcallHandler<H, F>
+where
+    H: HandleEcall,
+    F: Fn(&SecMonitor, &mut TrapRegs) -> Result<EcallResult, EcallError>,
+{
+    pub const fn add_ecall<O: Fn(&SecMonitor, &mut TrapRegs) -> Result<EcallResult, EcallError>>(
+        self,
+        func_id: usize,
+        ext_id: usize,
+        f: O,
+    ) -> EcallHandler<EcallHandler<H, F>, O> {
+        EcallHandler {
+            funcid: func_id,
+            extid: ext_id,
+            f,
+            other: self,
+        }
+    }
+}
+
+// pub struct EcallHandler<A, B> {
+//     a: A,
+//     b: B,
+//     // _marker: PhantomData<T>,
+// }
+
+// impl<A: Handler, B: Handler> Handler for EcallHandler<A, B> {
+//     #[inline]
+//     fn able(&self, func_id: usize, ext_id: usize) -> bool {
+//         self.a.able(func_id, ext_id) || self.b.able(func_id, ext_id)
+//     }
+
+//     fn call(&self, sm: &SecMonitor, regs: &mut TrapRegs) -> Result<EcallResult, EcallError> {
+//         if self.a.able(regs.a6, regs.a7) {
+//             self.a.call(sm, regs)
+//         } else if self.b.able(regs.a6, regs.a7) {
+//             self.b.call(sm, regs)
+//         } else {
+//             Err(EcallError::UnsupportedFunc)
+//         }
+//     }
+// }
+
+// impl<A: Handler, B: Handler> EcallHandler<A, B> {
+//     pub const fn add_ecall<F: Fn(&SecMonitor, &mut TrapRegs) -> Result<EcallResult, EcallError>>(
+//         self,
+//         func_id: usize,
+//         ext_id: usize,
+//         f: F,
+//     ) -> EcallHandler<EcallHandler2<F>, EcallHandler<A, B>> {
+//         let handler = EcallHandler2 { func_id, ext_id, f };
+//         EcallHandler {
+//             a: handler,
+//             b: self,
+//         }
+//     }
+// }
+
+impl<F> EcallHandler<(), F>
+where
+    F: Fn(&SecMonitor, &mut TrapRegs) -> Result<EcallResult, EcallError>,
+{
+    pub const fn new(funcid: usize, extid: usize, f: F) -> Self {
+        Self {
+            funcid,
+            extid,
+            f,
+            other: (),
+        }
+    }
+}
+
+// /// The adjustment of registers must be done in the call function.
+// ///
+// pub mod pause_enclave {
+//     use crate::hart;
+//     use enclave::EnclaveIdx;
+//     use htee_console::log;
+//     use sbi::TrapRegs;
+
+//     pub const ID: usize = sbi::ecall::SBISMEnclaveCall::SbiSMStopEnclave as usize;
+
+//     pub fn call(regs: &mut TrapRegs) {
+//         log::debug!("Pause enclave");
+//         let hs = hart::current();
+//         regs.mepc += 0x4;
+
+//         // match hs.get_enc_ptr().unwrap().as_enclave() {
+//         //     EnclaveRef::User(enclave) => {
+//         //         // ecall instruction length
+//         //         let rc = regs.a0;
+//         //         enclave.enclave_ctx.save(regs);
+//         //         unsafe {
+//         //             *regs = enclave.host_ctx.restore();
+//         //             regs.a0 = enclave.id().into();
+//         //             regs.a1 = rc;
+//         //         }
+//         //     }
+//         //     EnclaveRef::Driver(enclave) => unsafe {
+//         //         enclave.enclave_ctx.save(regs);
+//         //         let rc = regs.a0;
+//         //         *regs = enclave.host_ctx.restore();
+//         //         regs.a0 = enclave.id.into();
+//         //         regs.a1 = rc;
+//         //     },
+//         // }
+//         hs.set_enc(EnclaveIdx::HOST);
+//     }
+// }
 
 // pub mod clean_enclave {
 //     use crate::{hart, sm};
@@ -216,64 +409,64 @@ pub mod pause_enclave {
 //     }
 // }
 
-/// ELock instruction extension is designed for the enclave to lock the memory region.
-/// The memory area including the mmio area and normal physical memory area.
-///
-/// Memory area that locked, will be unaccessed by anyone except the owner.
-///
-/// The caller must be in the Linux Driver Enclave(LDE). This is achieved by checking
-/// the current hart state.
-///
-/// Firstly, the sm will check the ownership of the request memory physical area.
-/// The memory physical area must belong to the host.
-///
-/// Secondly, the sm will check if the memory physical area is already locked.
-/// If it is, the sm will return an error.
-///
-/// Thirdly, the sm will change the ownership of the memory physical area to current enclave.
-pub mod elock {
-    use htee_console::log;
-    use sbi::TrapRegs;
+// /// ELock instruction extension is designed for the enclave to lock the memory region.
+// /// The memory area including the mmio area and normal physical memory area.
+// ///
+// /// Memory area that locked, will be unaccessed by anyone except the owner.
+// ///
+// /// The caller must be in the Linux Driver Enclave(LDE). This is achieved by checking
+// /// the current hart state.
+// ///
+// /// Firstly, the sm will check the ownership of the request memory physical area.
+// /// The memory physical area must belong to the host.
+// ///
+// /// Secondly, the sm will check if the memory physical area is already locked.
+// /// If it is, the sm will return an error.
+// ///
+// /// Thirdly, the sm will change the ownership of the memory physical area to current enclave.
+// pub mod elock {
+//     use htee_console::log;
+//     use sbi::TrapRegs;
 
-    use crate::{hart, sm};
+//     use crate::{hart, sm};
 
-    pub const ID: usize = sbi::ecall::SBISMEnclaveCall::SbiSMELock as usize;
+//     pub const ID: usize = sbi::ecall::SBISMEnclaveCall::SbiSMELock as usize;
 
-    pub fn call(tregs: &mut TrapRegs) {
-        let vaddr = tregs.a0;
-        let size = tregs.a1;
-        log::debug!("ELock {:#x}..{:#x}", vaddr, vaddr + size);
-        if let Err(e) = sm().lock_mem(hart::current().enclave, vaddr, size) {
-            log::error!("[SM] ELock error: {e}");
-            tregs.mepc += 0x4;
-            return;
-        }
-        tregs.mepc += 0x4;
-    }
-}
+//     pub fn call(tregs: &mut TrapRegs) {
+//         let vaddr = tregs.a0;
+//         let size = tregs.a1;
+//         log::debug!("ELock {:#x}..{:#x}", vaddr, vaddr + size);
+//         if let Err(e) = sm().lock_mem(hart::current().enclave, vaddr, size) {
+//             log::error!("[SM] ELock error: {e}");
+//             tregs.mepc += 0x4;
+//             return;
+//         }
+//         tregs.mepc += 0x4;
+//     }
+// }
 
-/// EFree instruction extension is designed for the enclave to unlock the memory region
-/// which is locked by ELock.
-///
-/// Note: since the memory region is belonged to host before it locked, efree
-/// will give it back to host.
-pub mod efree {
-    use htee_console::log;
-    use sbi::TrapRegs;
+// /// EFree instruction extension is designed for the enclave to unlock the memory region
+// /// which is locked by ELock.
+// ///
+// /// Note: since the memory region is belonged to host before it locked, efree
+// /// will give it back to host.
+// pub mod efree {
+//     use htee_console::log;
+//     use sbi::TrapRegs;
 
-    use crate::{hart, sm};
+//     use crate::{hart, sm};
 
-    pub const ID: usize = sbi::ecall::SBISMEnclaveCall::SbiSMEFree as usize;
+//     pub const ID: usize = sbi::ecall::SBISMEnclaveCall::SbiSMEFree as usize;
 
-    pub fn call(tregs: &mut TrapRegs) {
-        let vaddr = tregs.a0;
-        let size = tregs.a1;
-        log::debug!("EFree {:#x}..{:#x}", vaddr, vaddr + size);
-        if let Err(e) = sm().free_mem(hart::current().enclave, vaddr, size) {
-            log::error!("[SM] EFree error: {e}");
-            tregs.mepc += 0x4;
-            return;
-        }
-        tregs.mepc += 0x4;
-    }
-}
+//     pub fn call(tregs: &mut TrapRegs) {
+//         let vaddr = tregs.a0;
+//         let size = tregs.a1;
+//         log::debug!("EFree {:#x}..{:#x}", vaddr, vaddr + size);
+//         if let Err(e) = sm().free_mem(hart::current().enclave, vaddr, size) {
+//             log::error!("[SM] EFree error: {e}");
+//             tregs.mepc += 0x4;
+//             return;
+//         }
+//         tregs.mepc += 0x4;
+//     }
+// }

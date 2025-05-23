@@ -1,173 +1,738 @@
-use core::{ops::Range, ptr::NonNull, sync::atomic::AtomicUsize};
-use data_structure::linked_list::LinkedList;
-use enclave::{
-    EnclaveId, EnclaveIdGenerator, EnclaveType, LinuxServiceEnclaveList, LinuxUserEnclaveList,
-};
-use extension::Extension;
+use core::{ptr::NonNull, sync::atomic::AtomicUsize};
+
+use enclave::{Enclave, EnclaveId, EnclaveIdx, EnclaveType};
 use heapless::Vec;
 use hsm::{Hsm, MAX_HART_NUM};
-use htee_device::device::{Device, DeviceInfo};
-use mempool::Mempool;
-// use htee_macro::usize_env_or;
-use riscv::register::{Permission, satp};
+use htee_console::log;
+use htee_device::device::Device;
+use pmp::{MAX_PMP_COUNT, PmpHelper};
+use riscv::register::*;
+use sbi::TrapRegs;
 use spin::{Mutex, RwLock};
-use vm::{aligned, page_table::BarePtReader, vm::VirtAddr, Translate};
+use trap_proxy::ProxyResult;
+use vm::{
+    allocator::FrameAllocator,
+    mm::SV39,
+    page_table::{BarePtReader, BarePtWriter, PTEFlags},
+    prelude::*,
+    vm::Sv39VmMgr,
+};
 
 use crate::{
-    Error,
-    PMP_COUNT, // ecall,
-    // hart,
-    // inst_ext,
-    // pma::PhysMemAreaMgr,
-    // pmp::update_pmp_by_pmas,
-    heap::Heap,
+    Error, PMP_COUNT, check_stack_overflow,
+    ecall::{EcallError, EcallResult},
+    enclave::{Builder, BuilderAllocator, EnclaveMgr, lse, lue, measure_data},
+    helper,
 };
 use clint::ClintClient;
 use pma::{Owner, PhysMemArea, PhysMemAreaMgr, PmaProp};
 
-// pub const SM_START: usize =
-//     usize_env_or!("FW_TEXT_START", 0x80000000) + usize_env_or!("SBI_SIZE", 0x60000);
-
-// type SmSv39VmMgr = Sv39VmMgr<BarePtWriter, OneShotAllocatorWrapper>;
-
-const CHANNEL_NUM: usize = 16;
-
 pub struct SecMonitor {
     pub pma_mgr: RwLock<PhysMemAreaMgr>,
-    pub eid_gen: EnclaveIdGenerator,
+    pub enc_mgr: EnclaveMgr,
     pub clint: ClintClient,
     pub hsm: Hsm,
-    // pub hart_num: usize,
-    // pub mmio: Mmio,
-    pub dma: usize,
-    pub lues: Mutex<LinuxUserEnclaveList>,
-    pub ldes: Mutex<LinkedList<EnclaveType>>,
-    pub lses: Mutex<LinuxServiceEnclaveList>,
-
     pub nw_cache: Mutex<pmp::NwCache>,
-
     pub nw_fault_num: AtomicUsize,
 
-    pub heap: Mutex<Heap>,
-    // pub channels: Mutex<[Channel<usize>; CHANNEL_NUM]>,
     pub device: Device,
-
-    // pub pmp_bufs:
-}
-
-impl Extension<PhysMemAreaMgr> for SecMonitor {
-    fn view<O>(&self, f: impl FnOnce(&PhysMemAreaMgr) -> O) -> O {
-        f(&self.pma_mgr.read())
-    }
-
-    fn update<O>(&self, f: impl FnOnce(&mut PhysMemAreaMgr) -> O) -> O {
-        f(&mut self.pma_mgr.write())
-    }
-}
-
-impl Extension<ClintClient> for SecMonitor {
-    #[inline]
-    fn view<O>(&self, f: impl FnOnce(&ClintClient) -> O) -> O {
-        f(&self.clint)
-    }
-
-    fn update<O>(&self, _: impl FnOnce(&mut ClintClient) -> O) -> O {
-        unimplemented!()
-    }
-}
-
-impl Extension<Device> for SecMonitor {
-    #[inline]
-    fn view<O>(&self, f: impl FnOnce(&Device) -> O) -> O {
-        f(&self.device)
-    }
-
-    fn update<O>(&self, _: impl FnOnce(&mut Device) -> O) -> O {
-        unimplemented!()
-    }
-}
-
-impl Extension<LinuxServiceEnclaveList> for SecMonitor {
-    fn view<O>(&self, f: impl FnOnce(&LinuxServiceEnclaveList) -> O) -> O {
-        f(&self.lses.lock())
-    }
-
-    fn update<O>(&self, f: impl FnOnce(&mut LinuxServiceEnclaveList) -> O) -> O {
-        f(&mut self.lses.lock())
-    }
-}
-
-impl Extension<Hsm> for SecMonitor {
-    #[inline]
-    fn view<O>(&self, f: impl FnOnce(&Hsm) -> O) -> O {
-        f(&self.hsm)
-    }
-
-    fn update<O>(&self, _: impl FnOnce(&mut Hsm) -> O) -> O {
-        // f(&mut self.hsm)
-        unimplemented!()
-    }
-}
-
-impl Extension<LinuxUserEnclaveList> for SecMonitor {
-    #[inline]
-    fn view<O>(&self, f: impl FnOnce(&LinuxUserEnclaveList) -> O) -> O {
-        f(&self.lues.lock())
-    }
-
-    fn update<O>(&self, f: impl FnOnce(&mut LinuxUserEnclaveList) -> O) -> O {
-        f(&mut self.lues.lock())
-    }
-}
-
-impl Extension<EnclaveIdGenerator> for SecMonitor {
-    fn view<O>(&self, f: impl FnOnce(&EnclaveIdGenerator) -> O) -> O {
-        f(&self.eid_gen)
-    }
-
-    fn update<O>(&self, _: impl FnOnce(&mut EnclaveIdGenerator) -> O) -> O {
-        unimplemented!()
-    }
-}
-
-impl Extension<pmp::NwCache> for SecMonitor {
-    fn view<O>(&self, f: impl FnOnce(&pmp::NwCache) -> O) -> O {
-        f(&self.nw_cache.lock())
-    }
-
-    fn update<O>(&self, f: impl FnOnce(&mut pmp::NwCache) -> O) -> O {
-        f(&mut self.nw_cache.lock())
-    }
 }
 
 impl SecMonitor {
-    // pub fn new(device: &DeviceInfo) -> Self {
-    //     Self {
-    //         pma_mgr: RwLock::new(PhysMemAreaMgr::uninit()),
-    //         eid_gen: EnclaveIdGenerator::new(),
-    //         clint: ClintClient::new(device.hart_num),
-    //         // mmio: Mmio::default(),
-    //         hsm: Hsm::new(device.hart_num),
-    //         dma: 0,
-    //         // hart_num: device.hart_num,
-    //         lues: Mutex::new(LinuxUserEnclaveList::new()),
-    //         ldes: Mutex::new(LinkedList::new()),
-    //         lses: Mutex::new(LinuxServiceEnclaveList::new()),
-    //         // channels: Mutex::new([Channel::EMPTY; CHANNEL_NUM]),
-    //         device: Device::from_device_info(device).unwrap(),
-    //     }
-    // }
+    pub fn handle_trap(&self, regs: &mut TrapRegs) -> ProxyResult {
+        let trap = mcause::read().cause();
+        let res = match trap {
+            mcause::Trap::Exception(e) => self.handle_exception(e, regs),
+            mcause::Trap::Interrupt(i) => self.handle_interrupt(i, regs),
+        };
+        let cf = res.unwrap_or_else(|e| {
+            log::error!("{e}");
+            ProxyResult::Continue
+        });
+
+        cf
+    }
+
+    #[inline(always)]
+    pub fn handle_interrupt(
+        &self,
+        interrupt: mcause::Interrupt,
+        regs: &mut TrapRegs,
+    ) -> Result<ProxyResult, Error> {
+        let res = match interrupt {
+            mcause::Interrupt::MachineSoft => self.handle_msoft_trap(regs),
+            _ => ProxyResult::Continue,
+        };
+
+        Ok(res)
+    }
+
+    pub fn handle_msoft_trap(&self, _: &mut TrapRegs) -> ProxyResult {
+        let hsm = &self.hsm;
+        let op = hsm.take_op();
+        if op.clean_pmp {
+            if hsm.current().get_priv::<EnclaveIdx>().is_none() {
+                // in normal world
+                hsm.current().clean_pmp();
+            }
+            self.clint.reset_msip();
+        }
+        ProxyResult::Continue
+    }
+
+    pub fn handle_exception(
+        &self,
+        exception: mcause::Exception,
+        regs: &mut TrapRegs,
+    ) -> Result<ProxyResult, Error> {
+        use sbi::ecall::SBI_EXT_HTEE_ENCLAVE;
+
+        let res = match exception {
+            mcause::Exception::IllegalInstruction => {
+                if regs.a7 == SBI_EXT_HTEE_ENCLAVE && mtval::read() == 0 {
+                    // unimp width
+                    self.handle_ecall(regs, 0x2)
+                } else {
+                    ProxyResult::Continue
+                }
+            }
+            mcause::Exception::LoadFault
+            | mcause::Exception::StoreFault
+            | mcause::Exception::InstructionFault => match self.handle_pmp_fault(regs) {
+                Ok(_) => ProxyResult::Return,
+                Err(e) => {
+                    log::trace!("[SM] {e}");
+                    // unsafe { regs.redirect_to_smode() };
+                    ProxyResult::Continue
+                }
+            },
+            mcause::Exception::Breakpoint => ProxyResult::Continue,
+            // handle the ecall from S-mode ecall
+            mcause::Exception::SupervisorEnvCall => {
+                if regs.a7 == SBI_EXT_HTEE_ENCLAVE {
+                    // ecall instruction length
+                    self.handle_ecall(regs, 0x4)
+                } else {
+                    ProxyResult::Continue
+                }
+            }
+            mcause::Exception::InstructionPageFault
+            | mcause::Exception::LoadPageFault
+            | mcause::Exception::StorePageFault => {
+                log::warn!(
+                    "hart {} get page fault:
+mepc: {:#x}, mtval: {:#x}, mscratch: {:#x}, mcause: {:#x}
+satp: {:#x}, stvec:{:#x}, scause: {:#x}
+a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
+                    mhartid::read(),
+                    regs.mepc,
+                    mtval::read(),
+                    mscratch::read(),
+                    mcause::read().bits(),
+                    satp::read().bits(),
+                    stvec::read().bits(),
+                    scause::read().bits(),
+                    regs.a0,
+                    regs.a1,
+                    regs.a2,
+                    regs.ra,
+                    regs.sp,
+                );
+                panic!()
+            }
+            _ => ProxyResult::Continue,
+        };
+
+        Ok(res)
+    }
+
+    fn reset_harts_pmp(&self) {
+        for i in 0..self.hsm.num() {
+            if i == mhartid::read() {
+                continue;
+            }
+            self.hsm.send_ops(i, hsm::HartStateOps {
+                clean_pmp: true,
+                ..self.hsm.recv_op(i)
+            });
+        }
+        self.hsm.current().clean_pmp();
+        self.clint.send_ipi_other_harts();
+        log::debug!("cleaned harts pmp");
+    }
+
+    fn create_lue(&self, arg0: usize) -> Result<EcallResult, EcallError> {
+        debug_assert_ne!(arg0, 0);
+        let eid = self.enc_mgr.get_new_eid();
+        let userargs = lue::get_args(arg0);
+
+        // the entire memory
+        self.pma_mgr.write().update_pma_by_vma(
+            userargs.mem,
+            PmaProp::empty().owner(eid).permission(Permission::RWX),
+        );
+
+        // meta page
+        self.pma_mgr.write().update_pma_by_vma(
+            VirtMemArea::default()
+                .start(userargs.mem.start as usize)
+                .size(PAGE_SIZE),
+            PmaProp::empty().owner(eid).permission(Permission::NONE),
+        );
+
+        // share area
+        self.pma_mgr.write().update_pma_by_vma(
+            userargs.share,
+            PmaProp::empty()
+                .owner(EnclaveId::EVERYONE)
+                .permission(Permission::RWX),
+        );
+
+        self.reset_harts_pmp();
+
+        let lse = self.enc_mgr.get_lse(0).unwrap();
+        let mut layout = lue::init_layout(&userargs, lse);
+
+        let allocator = BuilderAllocator::new(
+            VirtMemArea::default()
+                .start(userargs.unused.start as usize)
+                .size(userargs.unused.size - 0x1000),
+        );
+
+        let mut builder = Builder {
+            vmm: Sv39VmMgr::new(
+                allocator.alloc().unwrap(),
+                BarePtWriter,
+                allocator,
+                satp::read().asid(),
+                SV39,
+            ),
+        };
+
+        let enc = builder.create_lue(&userargs, eid);
+        enc.nw_vma = userargs.mem;
+
+        // map trampoline
+        let trampoline = builder.create_trampoline(lse.data.trampoline);
+        layout.trampoline = trampoline;
+
+        // map lse
+        builder.map_vma(lse.data.rt, layout.rt);
+
+        // map stack
+        builder.alloc_vma(layout.stack).unwrap();
+        enc.data.enc_ctx.tregs.sp = layout.stack.start + layout.stack.size;
+
+        // map args
+        let bootargs_vma = builder.alloc_vma(layout.bootargs).unwrap();
+        enc.data.enc_ctx.tregs.a1 = bootargs_vma.start;
+
+        // map share
+        builder.map_vma(userargs.share, layout.share);
+        // map binary
+        builder.map_vma(userargs.binary, layout.binary);
+        // map serial
+        builder.map_frames(
+            PhysPageNum::from_paddr(self.device.uart.get_reg().start),
+            VirtMemArea::default()
+                .start(self.device.uart.get_reg().start)
+                .size(align_up!(self.device.uart.get_reg().len(), PAGE_SIZE))
+                .flags(PTEFlags::rw().dirty().accessed()),
+        );
+
+        let (head, free_size) = builder.collect_unused();
+
+        lue::create_bootargs(
+            bootargs_vma,
+            userargs.mem.size(userargs.mem.size - 0x1000),
+            layout,
+            userargs,
+            head,
+            free_size,
+            self.device.clone(),
+        );
+
+        self.enc_mgr.push_lue(enc);
+
+        Ok(EcallResult::ret().retval(eid.0))
+    }
+
+    fn create_lse(&self, arg0: usize) -> Result<EcallResult, EcallError> {
+        let eid = self.enc_mgr.get_new_eid();
+        log::debug!("eid: {eid}");
+        let userargs = lse::get_user_args(arg0);
+
+        debug_assert!(aligned!(userargs.rt.start, PAGE_SIZE));
+        debug_assert_eq!(userargs.mem.start, userargs.rt.start - 0x1000);
+        debug_assert_eq!(
+            userargs.mem.size,
+            align_up!(userargs.rt.size, PAGE_SIZE) + 0x1000
+        );
+
+        self.pma_mgr.write().update_pma_by_vma(
+            userargs.rt,
+            PmaProp::empty()
+                .owner(Owner::EVERYONE)
+                .permission(Permission::RX),
+        );
+
+        self.pma_mgr.write().update_pma_by_vma(
+            userargs.mem.size(PAGE_SIZE),
+            PmaProp::empty()
+                .owner(Owner::EVERYONE)
+                .permission(Permission::NONE),
+        );
+        self.reset_harts_pmp();
+
+        let md5 = measure_data(userargs.rt);
+        log::debug!("md5: {:#x}", md5);
+
+        let allocator = BuilderAllocator::new(
+            VirtMemArea::default()
+                .start(userargs.unused.start as usize)
+                .size(userargs.unused.size),
+        );
+
+        let mut builder = Builder {
+            vmm: Sv39VmMgr::new(
+                PhysPageNum(0),
+                BarePtWriter,
+                allocator,
+                satp::read().asid(),
+                SV39,
+            ),
+        };
+
+        let enc = builder.create_lse(&userargs, eid);
+        enc.nw_vma = userargs.mem;
+        enc.data.rt = userargs.rt;
+        enc.data.trampoline = userargs.rt.size(PAGE_SIZE);
+        self.enc_mgr.push_lse(enc);
+
+        Ok(EcallResult::ret().retval(eid.0))
+    }
+
+    fn create_enclave(&self, regs: &mut TrapRegs) -> Result<EcallResult, EcallError> {
+        const USER_ENC: usize = EnclaveType::User as usize;
+        const SER_ENC: usize = EnclaveType::Service as usize;
+
+        match regs.a1 {
+            USER_ENC => self.create_lue(regs.a0),
+            SER_ENC => self.create_lse(regs.a0),
+            _ => panic!("unknown enclave type"),
+        }
+    }
+
+    fn destory_enclave(&self, regs: &mut TrapRegs) -> Result<EcallResult, EcallError> {
+        // SAFETY: Enclave<()> is safe
+        let enc = self
+            .hsm
+            .current()
+            .get_priv::<EnclaveIdx>()
+            .unwrap()
+            .as_enc();
+        let owner = enc.id();
+
+        enc.print_records();
+
+        if let Some(enc) = enc.as_lue() {
+            log::info!("enclave pause num: {}", enc.data.pause_num);
+        }
+
+        log::info!("[SM] Cleaning enclave {}", owner);
+
+        self.enc_mgr.rm_lue(owner);
+        *regs = unsafe { enc.nw_ctx.restore() };
+
+        // clean memory content
+        // SAFETY: it is safe to clean the enclave memory content by using host satp.
+        // 因为，如果操作系统去掉了某个页的映射，那SM就不会复原这个页的所有者，这会导致这个页永远也无法被访问。
+        for vpn in enc.nw_vma.iter_vpn() {
+            let paddr = vpn
+                .translate(enc.nw_vma.satp.ppn(), enc.nw_vma.satp.mode(), &BarePtReader)
+                .unwrap();
+            let pma = self.pma_mgr.read().get_pma(paddr).unwrap();
+            let pma_owner = pma.get_prop().get_owner();
+            // we still need to check the owner of the page, avoiding cleaning the page that is not owned by the enclave
+            if pma_owner == owner {
+                unsafe { clean_page_content(paddr.0 as usize) };
+                self.pma_mgr.write().insert_page(
+                    paddr,
+                    PmaProp::empty()
+                        .owner(EnclaveId::HOST.0)
+                        .permission(Permission::RWX),
+                );
+            } else if pma_owner == EnclaveId::EVERYONE {
+                self.pma_mgr.write().insert_page(
+                    paddr,
+                    PmaProp::empty()
+                        .owner(EnclaveId::HOST.0)
+                        .permission(Permission::RWX),
+                );
+            } else {
+                log::error!("cleaning pma {pma} owned by {}", pma_owner);
+                panic!(
+                    "[SM] Invalid pma owner in cleaning enclave. The correct owner should be {owner} or {}, but got {}.",
+                    EnclaveId::EVERYONE,
+                    pma_owner
+                );
+            }
+        }
+
+        self.hsm.current().clear_priv();
+        log::info!("[SM] Enclave {} cleaned", owner);
+
+        Ok(EcallResult::ret().retval(0).fixed_epc())
+    }
+
+    fn launch_enclave(&self, regs: &mut TrapRegs) -> Result<EcallResult, EcallError> {
+        let eid = EnclaveId::from(regs.a0);
+        log::debug!("Launch enclave. Id: #{}", eid);
+        #[allow(unused_assignments)]
+        let mut args = (0, 0);
+        #[allow(unused_assignments)]
+        let mut addr = 0;
+        #[allow(unused_assignments)]
+        let mut sp = 0;
+
+        if let Some(enc) = self.enc_mgr.get_lue(eid) {
+            args = lue::prepare_launch(enc, regs);
+            addr = enclave::DEFAULT_RT_START;
+            sp = enc.data.enc_ctx.tregs.sp;
+            self.hsm.current().set_priv(enc.idx());
+            log::debug!("Set enclave idx #{}", enc.idx());
+        } else if let Some(_) = self.enc_mgr.get_lse(eid) {
+            panic!("Unsupported yet")
+        } else {
+            panic!("Enclave not found")
+        }
+
+        self.hsm.current().clean_pmp();
+        unsafe { stvec::write(0, stvec::TrapMode::Direct) };
+
+        log::debug!("lue arg0: {:#x}, arg1: {:#x}", args.0, args.1);
+        log::debug!("enclave entry: {addr:#x}");
+        log::debug!("entry satp: {:#x}", satp::read().bits());
+
+        unsafe {
+            self.hsm.mret(
+                addr,
+                mstatus::MPP::Supervisor,
+                args.0,
+                args.1,
+                sp,
+                satp::read().bits(),
+            )
+        }
+    }
+
+    fn resume_enclave(&self, regs: &mut TrapRegs) -> Result<EcallResult, EcallError> {
+        // todo!()
+        let eid = EnclaveId::from(regs.a0);
+        // unimp length
+        regs.mepc += 0x2;
+
+        log::debug!("hart {} resuming enclave #{eid}", mhartid::read());
+        let enc = self
+            .enc_mgr
+            .get_lue(eid)
+            .ok_or(enclave::Error::InvalidEnclaveId)
+            .map_err(|e| {
+                log::error!("{e}");
+                EcallError::code(e as usize)
+            })?;
+
+        // set current enclave
+        log::debug!("Set current enclave to #{eid}, idx: {}", enc.idx());
+
+        self.hsm.current().clean_pmp();
+        self.hsm.current().set_priv(enc.idx());
+        // });
+
+        // restore the pmp status
+        enc.data.pmp_cache.restore();
+        log::debug!("restore pmp entires");
+
+        // save new context
+        enc.nw_ctx.save(&regs);
+
+        debug_assert_ne!(enc.data.enc_ctx.sregs.satp, 0);
+        debug_assert_ne!(enc.data.enc_ctx.sregs.satp, satp::read().bits());
+
+        log::debug!("restore enclave context:");
+        log::debug!("satp: {:#x}", enc.data.enc_ctx.sregs.satp);
+        log::debug!("sscratch: {:#x}", enc.data.enc_ctx.sregs.sscratch);
+        log::debug!("sstatus: {:#x}", enc.data.enc_ctx.sregs.sstatus);
+        log::debug!("stvec: {:#x}", enc.data.enc_ctx.sregs.stvec);
+        log::debug!("sepc: {:#x}", enc.data.enc_ctx.sregs.sepc);
+        log::debug!("scaues: {:#x}", enc.data.enc_ctx.sregs.scaues);
+        log::debug!("stval: {:#x}", enc.data.enc_ctx.sregs.stval);
+        // SAFETY: It is ready to switch context
+        *regs = unsafe { enc.data.enc_ctx.restore() };
+        riscv::asm::sfence_vma_all();
+
+        enc.data.switch_cycle.end();
+
+        // let cycle_finish = riscv::register::cycle::read();
+        // log::info!("cycle in resume enclave: {:#x}", cycle_finish - cycle_start);
+        // unsafe { riscv::register::mcountinhibit::set_cy() };
+
+        Ok(EcallResult::ret().fixed_epc())
+    }
+
+    fn pause_enclave(&self, regs: &mut TrapRegs) -> Result<EcallResult, EcallError> {
+        // unsafe { riscv::register::mcountinhibit::clear_cy() };
+        // let cycle_start = riscv::register::cycle::read();
+
+        log::debug!("hart {} pausing enclave", mhartid::read());
+        // SAFETY: It is safe to convert EnclaveIdx to Enclave<()>
+        let enc = self
+            .hsm
+            .current()
+            .get_priv::<EnclaveIdx>()
+            .map(|idx| {
+                log::debug!("current enclave idx: {}", idx);
+                idx
+            })
+            .unwrap()
+            .as_enc();
+
+        match enc.get_type() {
+            EnclaveType::User => {
+                let enc = enc.as_lue().unwrap();
+                self.hsm.current().clear_priv();
+                lue::pause(enc, regs)
+                    .map(|_| {
+                        log::debug!("pause enclave, return to {:#x}", regs.mepc);
+                        EcallResult::ret().retval(regs.a1).fixed_epc()
+                    })
+                    .map_err(|e| {
+                        log::error!("pause enclave failed: {}", e);
+                        EcallError::code(e as usize)
+                    })
+            }
+            EnclaveType::Service => {
+                log::error!("service enclave cannot be paused");
+                Err(EcallError::code(0x1))
+            }
+            _ => {
+                log::error!("unsupported enclave type");
+                Err(EcallError::code(0x1))
+            }
+        }
+    }
 
     #[inline]
-    pub fn init(&mut self, device: &DeviceInfo) {
-        self.eid_gen = EnclaveIdGenerator::new();
-        self.clint = ClintClient::new(device.hart_num);
-        self.hsm = Hsm::new(device.hart_num);
-        self.dma = 0;
-        self.lues = Mutex::new(LinuxUserEnclaveList::new());
-        self.ldes = Mutex::new(LinkedList::new());
-        self.lses = Mutex::new(LinuxServiceEnclaveList::new());
-        self.device = Device::from_device_info(device).unwrap();
+    pub fn handle_ecall(&self, regs: &mut TrapRegs, offset: usize) -> ProxyResult {
+        use crate::ecall::*;
+        use crate::enclave::*;
+
+        #[cfg(debug_assertions)]
+        check_stack_overflow();
+
+        let funcid = regs.a6;
+        let extid = regs.a7;
+
+        let res = EcallHandler::new(CREATE_ENC, EXT_ID, SecMonitor::create_enclave)
+            .add_ecall(LAUNCH_ENC, EXT_ID, SecMonitor::launch_enclave)
+            .add_ecall(EXIT_ENC, EXT_ID, SecMonitor::destory_enclave)
+            .add_ecall(DESTROY_ENC, EXT_ID, SecMonitor::destory_enclave)
+            .add_ecall(RESUME_ENC, EXT_ID, SecMonitor::resume_enclave)
+            .add_ecall(PAUSE_ENC, EXT_ID, SecMonitor::pause_enclave)
+            .call(self, regs);
+
+        let res = match res {
+            Ok(r) => {
+                if !r.fixed_epc {
+                    unsafe {
+                        regs.fix_mepc(offset);
+                    }
+                }
+                regs.a0 = 0;
+                regs.a1 = r.retval;
+                // we will clean a6, a7
+                regs.a6 = 0;
+                regs.a7 = 0;
+                r.proxy
+            }
+            Err(e) => match e {
+                EcallError::UnsupportedFunc => {
+                    // log::error!("Unsupported function. We will passing to SBI");
+                    ProxyResult::Continue
+                }
+                EcallError::EcallRuntime(code) => {
+                    log::error!(
+                        "Handling ecall func failed in hart {:#x}: funcid {:#x}, ext: {:#x}, code: {}",
+                        mhartid::read(),
+                        funcid,
+                        extid,
+                        code
+                    );
+                    regs.a0 = code;
+                    regs.a1 = 0;
+                    regs.a6 = 0;
+                    regs.a7 = 0;
+                    unsafe {
+                        regs.fix_mepc(offset);
+                    }
+                    ProxyResult::Return
+                }
+            },
+        };
+
+        if let ProxyResult::Return = res {
+            log::debug!(
+                "hart #{} handle ecall finished, return to {:#x}",
+                mhartid::read(),
+                regs.mepc
+            );
+        }
+
+        res
+    }
+
+    #[inline]
+    pub fn handle_pmp_fault(&self, regs: &mut TrapRegs) -> Result<(), Error> {
+        #[cfg(debug_assertions)]
+        check_stack_overflow();
+
+        let buf = unsafe { self.hsm.current().pmp_buf.as_mut() };
+        buf.clear();
+
+        self.handle_all_fault(regs, buf)?;
+
+        Ok(())
+    }
+
+    #[inline]
+    fn handle_all_fault(
+        &self,
+        regs: &mut TrapRegs,
+        buf: &mut Vec<PmpHelper, MAX_PMP_COUNT>,
+    ) -> Result<(), Error> {
+        use helper::*;
+        use riscv::register::{mepc, mstatus, satp};
+        use vm::mm::*;
+
+        // unsafe { riscv::register::mcountinhibit::clear_cy() };
+        // let cycle_start = riscv::register::cycle::read();
+
+        let hartid = mhartid::read();
+        log::trace!("hart #{hartid} handle pmp fault at {:#x}", regs.mepc);
+        let satp = satp::read();
+        let mepc = mepc::read();
+        let mtval = mtval::read();
+        let mcause = mcause::read().bits();
+
+        let idx = self.hsm.current().get_priv::<EnclaveIdx>();
+        let enc: Option<&'static mut Enclave<()>> =
+            idx.map(|idx| unsafe { Enclave::from_ptr(idx) });
+        let eid = enc.map(|enc| enc.id()).unwrap_or(EnclaveId::HOST);
+        if let Some(idx) = idx {
+            log::trace!("hart {hartid} enclave idx: {idx}");
+        } else {
+            #[cfg(debug_assertions)]
+            {
+                let num = self
+                    .nw_fault_num
+                    .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                log::trace!("nw num: {}", num);
+            }
+
+            log::trace!("hart {hartid} Normal world");
+        }
+
+        log::trace!(
+            "hart {hartid}, satp: {:#x}, mepc: {mepc:#x}, mtval: {mtval:#x}, mcause: {mcause:#x}",
+            satp.bits()
+        );
+        log::trace!(
+            "sstatus: {:#x}, stvec: {:#x}, sepc: {:#x}, scause: {:#x}",
+            sstatus::read().bits(),
+            stvec::read().bits(),
+            sepc::read(),
+            scause::read().bits()
+        );
+
+        // let current_pmas = sm().get_current_pmas();
+
+        // log::trace!("current pma:");
+        // current_pmas.iter().for_each(|p| log::trace!("{}", p));
+
+        let mpp = mstatus::read().mpp();
+
+        if mpp == mstatus::MPP::Machine {
+            log::error!("mpp is Machine");
+            log::error!("mepc: {mepc:#x}");
+            log::error!("mtval: {mtval:#x}");
+            log::error!("hart id: {}", mhartid::read());
+            panic!();
+        }
+
+        match satp.mode() {
+            satp::Mode::Bare => {
+                log::trace!("Bare mode");
+                pmas_on_paddr(&self.pma_mgr.read(), mepc, mtval, buf).unwrap()
+            }
+            satp::Mode::Sv39 => {
+                log::trace!("SV39 mode");
+                pmas_req_vaddr(&self.pma_mgr.read(), mepc, mtval, satp.ppn(), SV39, buf)?
+            }
+            satp::Mode::Sv48 => {
+                log::trace!("SV48 mode");
+                pmas_req_vaddr(&self.pma_mgr.read(), mepc, mtval, satp.ppn(), SV48, buf)?
+            }
+            satp::Mode::Sv57 => todo!(),
+            satp::Mode::Sv64 => todo!(),
+        };
+
+        log::trace!("required pma:");
+        buf.iter()
+            .for_each(|p| log::trace!("{:#x} => {}", p.addr, p.pma));
+
+        for p in buf.iter() {
+            if !p
+                .pma
+                .check_owner(|owner| owner == eid || owner == EnclaveId::EVERYONE)
+            {
+                log::error!("Enclave #{} is not allowed to access {}", eid, p.pma);
+                log::error!("The region owned by #{}", p.pma.get_prop().get_owner());
+                log::error!("mepc: {mepc:#x}");
+                log::error!("mtval: {mtval:#x}");
+                log::error!("hart id: {}", mhartid::read());
+                panic!();
+            }
+        }
+
+        update_pmp_by_pmas(buf, self.iter_current_pma());
+
+        log::trace!("Updated pmp registers");
+
+        if idx.is_none() {
+            // update normal world cache
+            self.update_nw_pmp_cache();
+        }
+
+        let _ = idx
+            .map(|idx| unsafe { Enclave::<()>::from_ptr(idx) })
+            .map(|enc| enc.pmp_record.finish_handle());
+
+        // let cycle_finish = riscv::register::cycle::read();
+        // log::info!(
+        //     "cycle in handling pmp fault: {:#x}",
+        //     cycle_finish - cycle_start
+        // );
+        // unsafe { riscv::register::mcountinhibit::set_cy() };
+
+        Ok(())
+    }
+
+    fn update_nw_pmp_cache(&self) {
+        // self.update(|nw_cache: &mut NwCache| {
+        self.nw_cache.lock().clear();
+        for pmp in pmp::iter_hps() {
+            self.nw_cache.lock().push(pmp);
+        }
     }
 
     #[inline(always)]
@@ -195,123 +760,6 @@ impl SecMonitor {
     }
 
     #[inline]
-    pub fn alloc_mempool_spin(&self) -> Mempool {
-        loop {
-            if let Some(pool) = self.heap.lock().alloc_mempool() {
-                return pool;
-            }
-        }
-    }
-
-    #[inline]
-    pub fn free_mempool(&self, mempool: Mempool) {
-        unsafe { self.heap.lock().free_mempool(mempool) };
-    }
-
-    // pub fn init_mmio(&mut self, device: &DeviceInfo) {
-    //     self.mmio.uart = device.get_uart();
-    //     self.mmio.dma = device.get_dma().map(|dma| dma as usize).unwrap_or(0);
-    // }
-
-    // pub fn alloc_channel(&self, eid: EnclaveId, arg0: usize, arg1: usize) -> Result<usize, Error> {
-    //     let mut channels = self.channels.lock();
-    //     for (i, channel) in channels.iter_mut().enumerate() {
-    //         if channel.status == ChannelStatus::Free {
-    //             channel.status = ChannelStatus::Using;
-    //             channel.lue = Some(eid.0);
-    //             channel.arg0 = arg0 as u64;
-    //             channel.arg1 = arg1 as u64;
-    //             return Ok(i);
-    //         }
-    //     }
-    //     Err(Error::ChannelFull)
-    // }
-
-    // pub fn dealloc_channel(&self, id: usize) -> Result<(), Error> {
-    //     let mut channels = self.channels.lock();
-    //     channels[id].status = ChannelStatus::Free;
-    //     channels[id].lue = None;
-    //     channels[id].lde = None;
-    //     Ok(())
-    // }
-
-    // pub fn connect_channel(&self, cid: usize, eid: EnclaveId) -> Result<u64, Error> {
-    //     let mut channels = self.channels.lock();
-    //     let lue = self.search_lue(channels[cid].lue.unwrap()).unwrap();
-    //     if !lue.ldes.contains(&eid) {
-    //         return Err(Error::Other("The connection is not allowed"));
-    //     }
-    //     if channels[cid].lde.is_some() {
-    //         return Err(Error::Other("Channel already connected"));
-    //     }
-    //     channels[cid].lde = Some(eid.0);
-    //     Ok(channels[cid].arg0)
-    // }
-
-    // pub fn attach_channel<T>(
-    //     &self,
-    //     eid: EnclaveId,
-    //     f: impl FnOnce(&mut Channel<usize>) -> Result<T, Error>,
-    // ) -> Result<T, Error> {
-    //     let mut channels = self.channels.lock();
-    //     let channel = channels.iter_mut().find(|c| c.lde == Some(eid.0)).unwrap();
-    //     f(channel)
-    // }
-
-    pub fn copy_data(
-        &self,
-        src: (VirtAddr, satp::Satp, EnclaveId),
-        dst: (VirtAddr, satp::Satp, EnclaveId),
-        size: usize,
-    ) -> Result<(), Error> {
-        use core::slice;
-
-        let mut offset = 0;
-        while offset < size {
-            let src_paddr = src
-                .0
-                .add(offset)
-                .translate(src.1.ppn(), src.1.mode(), &BarePtReader)
-                .unwrap();
-            let dst_paddr = dst
-                .0
-                .add(offset)
-                .translate(dst.1.ppn(), dst.1.mode(), &BarePtReader)
-                .unwrap();
-
-            let src_pma = self.pma_mgr.read().get_pma(src_paddr.0).unwrap();
-            let dst_pma = self.pma_mgr.read().get_pma(dst_paddr.0).unwrap();
-            if src_pma.get_prop().get_owner() != src.2 || dst_pma.get_prop().get_owner() != dst.2 {
-                return Err(Error::Other("PMA access violation"));
-            }
-
-            let (src, dst) = if (size - offset) >= 0x1000 {
-                if src_pma.get_region().len() < 0x1000 || dst_pma.get_region().len() < 0x1000 {
-                    return Err(Error::Other("The source enclave is not allowed to access"));
-                }
-                offset += 0x1000;
-                (
-                    unsafe { slice::from_raw_parts(src_paddr.0 as *mut u8, 0x1000) },
-                    unsafe { slice::from_raw_parts_mut(dst_paddr.0 as *mut u8, 0x1000) },
-                )
-            } else {
-                if src_pma.get_region().len() < size - offset
-                    || dst_pma.get_region().len() < size - offset
-                {
-                    return Err(Error::Other("The source enclave is not allowed to access"));
-                }
-                offset = size;
-                (
-                    unsafe { slice::from_raw_parts(src_paddr.0 as *mut u8, size - offset) },
-                    unsafe { slice::from_raw_parts_mut(dst_paddr.0 as *mut u8, size) },
-                )
-            };
-            dst.copy_from_slice(src);
-        }
-        Ok(())
-    }
-
-    #[inline]
     pub fn iter_current_pma(&self) -> impl Iterator<Item = PhysMemArea> {
         use pmp::iter_hps;
 
@@ -332,791 +780,12 @@ impl SecMonitor {
             .collect();
         pmas
     }
-
-    // pub fn create_lse(&self, arg0: usize) -> Result<(), Error> {
-    //     use htee_channel::info::LseInfo;
-
-    //     let host_satp = satp::read();
-
-    //     let load_info = unsafe {
-    //         let paddr = VirtAddr(arg0)
-    //             .translate(host_satp.ppn(), host_satp.mode(), &BarePtReader)
-    //             .unwrap();
-
-    //         &*(paddr.0 as *const LseInfo)
-    //     };
-
-    //     log::debug!("{}", load_info);
-    //     log::debug!("host satp: {:#x}", host_satp.bits());
-
-    //     update_enc_pma_by_vaddr(
-    //         EnclaveId::EVERYONE,
-    //         Permission::RX,
-    //         load_info.mem.start.into(),
-    //         load_info.mem.page_num * 0x1000,
-    //         &mut self.pma_mgr.write(),
-    //         host_satp,
-    //     );
-
-    //     // notify other harts to clear their pmp registers
-    //     for i in 0..self.hart_num {
-    //         if i == mhartid::read() {
-    //             continue;
-    //         }
-    //         hart::send_ops(i, hart::HartStateOps {
-    //             clean_pmp: true,
-    //             ..hart::recv_op(i)
-    //         });
-    //     }
-
-    //     // alloc meta page and update meta page ownership
-    //     let meta_page =
-    //         VirtAddr(load_info.mem.start as usize + load_info.mem.page_num * 0x1000 - 0x1000)
-    //             .translate(host_satp.ppn(), host_satp.mode(), &BarePtReader)
-    //             .unwrap();
-    //     log::debug!("meta page: {:#x}", meta_page.0);
-    //     self.pma_mgr
-    //         .write()
-    //         .insert_page(meta_page, EnclaveId::EVERYONE, Permission::NONE);
-
-    //     let enclave =
-
-    //     Ok(())
-    // }
-
-    // pub fn create_lde(&self, arg0: usize) -> Result<EnclaveId, Error> {
-    //     use enclave::lde_builder;
-    //     use htee_channel::info::LdeInfo;
-
-    //     let host_satp = satp::read();
-
-    //     // get the load info from cli tool
-    //     let load_info = unsafe {
-    //         let paddr = VirtAddr(arg0)
-    //             .translate(host_satp.ppn(), host_satp.mode(), &BarePtReader)
-    //             .unwrap();
-
-    //         &*(paddr.0 as *const LdeInfo)
-    //     };
-
-    //     log::debug!("{}", load_info);
-    //     log::debug!("host satp: {:#x}", host_satp.bits());
-
-    //     let eid = self.eid_gen.fetch();
-    //     let total_mem_size = load_info.mem.page_num * 0x1000;
-    //     let enc_rt_start = RT_VADDR_START;
-    //     let rt_size = align_up!(load_info.rt.size, 0x1000);
-    //     let driver_start = load_info.driver.ptr as usize;
-    //     let driver_size = load_info.driver.size;
-    //     let enc_bin_start = BIN_VADDR_START;
-    //     let bin_size = align_up!(load_info.bin.size, 0x1000);
-    //     let stack_start = RT_VADDR_START - 0x1000;
-    //     let boot_arg_addr = BOOTARG_VADDR;
-    //     let enc_mods_start = enc_bin_start + bin_size;
-
-    //     log::info!("Creating linux driver enclave. Eid: {}", eid);
-
-    //     update_enc_pma_by_vaddr(
-    //         eid,
-    //         Permission::RWX,
-    //         load_info.mem.start.into(),
-    //         total_mem_size,
-    //         &mut self.pma_mgr.write(),
-    //         host_satp,
-    //     );
-
-    //     // notify other harts to clear their pmp registers
-    //     for i in 0..self.hart_num {
-    //         if i == mhartid::read() {
-    //             continue;
-    //         }
-    //         hart::send_ops(i, hart::HartStateOps {
-    //             clean_pmp: true,
-    //             ..hart::recv_op(i)
-    //         });
-    //     }
-
-    //     self.clint.send_ipi_other_harts();
-    //     log::debug!("sync pmp registers");
-
-    //     // alloc meta page and update meta page ownership
-    //     let meta_page = VirtAddr(load_info.unused.start as usize + load_info.unused.size - 0x1000)
-    //         .translate(host_satp.ppn(), host_satp.mode(), &BarePtReader)
-    //         .unwrap();
-    //     log::debug!("meta page: {:#x}", meta_page.0);
-    //     self.pma_mgr.write().insert_page(
-    //         meta_page,
-    //         PmaProp::empty().owner(eid).permission(Permission::NONE),
-    //     );
-
-    //     // create the enclave virtual memory allocator
-    //     let allocator = OneShotAllocatorWrapper(RefCell::new(OneShotAllocator::new(
-    //         host_satp.ppn(),
-    //         host_satp.mode(),
-    //         load_info.unused.start as usize,
-    //         load_info.unused.size - 0x1000,
-    //     )));
-    //     // we firstly allocate the stack and args page
-    //     let stack_ppn = allocator.alloc().unwrap();
-    //     let args_ppn = allocator.alloc().unwrap();
-    //     let serial_reg = self.device.uart.get_reg();
-
-    //     let (lde, vmm) = lde_builder(meta_page, driver_start, driver_size)
-    //         .eid(eid)
-    //         .host_info(HostInfo {
-    //             vaddr: load_info.mem.start.into(),
-    //             size: load_info.mem.page_num * 0x1000,
-    //             asid: host_satp.asid(),
-    //             pt_root: host_satp.ppn().into(),
-    //             pt_mode: host_satp.mode(),
-    //             ..Default::default()
-    //         })
-    //         .prepare_vmm(allocator)
-    //         .create_trampoline(VirtAddr::from(load_info.rt.ptr))
-    //         // map runtime
-    //         .map_host_pages(
-    //             VirtPageNum::from_vaddr(load_info.rt.ptr),
-    //             VirtPageNum::from_vaddr(enc_rt_start),
-    //             rt_size / 0x1000,
-    //             PTEFlags::rwx(),
-    //         )
-    //         // map stack
-    //         .map_frame(
-    //             stack_ppn,
-    //             VirtPageNum::from_vaddr(stack_start),
-    //             PTEFlags::rwx(),
-    //         )
-    //         // map args
-    //         .map_frame(
-    //             args_ppn,
-    //             VirtPageNum::from_vaddr(boot_arg_addr),
-    //             PTEFlags::rwx(),
-    //         )
-    //         // map binary
-    //         .map_host_pages(
-    //             VirtPageNum::from_vaddr(load_info.bin.ptr),
-    //             VirtPageNum::from_vaddr(enc_bin_start),
-    //             load_info.bin.size.div_ceil(0x1000),
-    //             PTEFlags::rwx(),
-    //         )
-    //         .map_mmio(&serial_reg)
-    //         .finish();
-
-    //     // we link the remain free frames
-    //     let (head, free_size) = link_remain_frame(vmm, host_satp);
-
-    //     // then we construct the enclave boot arguments
-    //     use htee_channel::enclave::runtime::*;
-
-    //     let args = LdeBootArgs {
-    //         mem: MemArg {
-    //             total_size: total_mem_size,
-    //         },
-    //         mods: ModArg {
-    //             start_vaddr: enc_mods_start,
-    //             num: 0,
-    //         },
-    //         tp: TpArg { addr: lde.tp },
-    //         bin: BinArg {
-    //             start: enc_bin_start,
-    //             size: bin_size,
-    //         },
-    //         driver_start,
-    //         driver_size,
-    //         sections: load_info.driver.sections.clone(),
-    //         unmapped: UnmappedArg {
-    //             head: head,
-    //             size: free_size,
-    //         },
-    //         device: self.device.clone(),
-    //     };
-    //     log::debug!("boot args: {args}");
-
-    //     unsafe {
-    //         *(PhysAddr::from_ppn(args_ppn).0 as *mut LdeBootArgs) = args;
-    //         lde.enclave_ctx.tregs.a1 = boot_arg_addr;
-    //     }
-
-    //     // add enclave to the list
-    //     self.ldes.lock().push_node(lde.node.as_node_mut());
-
-    //     // clean current hart pmp
-    //     hart::current().clean_pmp();
-    //     log::debug!("clean current hart pmp");
-
-    //     Ok(lde.id)
-    // }
-
-    /// Create new enclave
-    // pub fn create_user_enclave(&self, arg0: usize) -> Result<EnclaveId, Error> {
-    //     use htee_channel::h2e::*;
-
-    //     let host_satp = satp::read();
-
-    //     // get the load info from cli tool
-    //     let load_info = unsafe {
-    //         let paddr = VirtAddr(arg0)
-    //             .translate(host_satp.ppn(), host_satp.mode(), &BarePtReader)
-    //             .unwrap();
-
-    //         &*(paddr.0 as *const LueInfo)
-    //     };
-
-    //     log::debug!("{}", load_info);
-    //     log::debug!("host satp: {:#x}", host_satp.bits());
-
-    //     let eid = self.eid_gen.fetch();
-    //     let total_mem_size = load_info.mem.page_num * 0x1000;
-    //     let enc_rt_start = RT_VADDR_START;
-    //     let rt_size = align_up!(load_info.rt.size, 0x1000);
-    //     let enc_bin_start = BIN_VADDR_START;
-    //     let bin_size = align_up!(load_info.bin.size, 0x1000);
-    //     let enc_share_start = BIN_VADDR_START + bin_size;
-    //     let share_size = align_up!(load_info.shared.size, 0x1000);
-    //     let stack_start = RT_VADDR_START - 0x1000;
-    //     let boot_arg_addr = BOOTARG_VADDR;
-    //     let enc_mods_start = enc_bin_start + bin_size;
-    //     // let mods_num = load_info.mods.len();
-
-    //     log::info!("Creating linux user enclave. Eid: {}", eid);
-
-    //     if self
-    //         .pma_mgr
-    //         .read()
-    //         .iter_pma()
-    //         .any(|pma| pma.get_prop().get_owner() == eid)
-    //     {
-    //         log::error!("Existing pma for enclave {}", eid);
-    //         panic!()
-    //     }
-
-    //     // update pmas ownership
-    //     update_enc_pma_by_vaddr(
-    //         eid,
-    //         Permission::RWX,
-    //         load_info.mem.start.into(),
-    //         total_mem_size,
-    //         &mut self.pma_mgr.write(),
-    //         host_satp,
-    //     );
-
-    //     // notify other harts to clear their pmp registers
-    //     for i in 0..self.hart_num {
-    //         if i == mhartid::read() {
-    //             continue;
-    //         }
-    //         hart::send_ops(i, hart::HartStateOps {
-    //             clean_pmp: true,
-    //             ..hart::recv_op(i)
-    //         });
-    //     }
-    //     self.clint.send_ipi_other_harts();
-    //     log::debug!("sync pmp registers");
-
-    //     // alloc meta page and update meta page ownership
-    //     let meta_page = VirtAddr(load_info.unused.start as usize + load_info.unused.size - 0x1000)
-    //         .translate(host_satp.ppn(), host_satp.mode(), &BarePtReader)
-    //         .unwrap();
-    //     log::debug!("meta page: {:#x}", meta_page.0);
-    //     self.pma_mgr.write().insert_page(
-    //         meta_page,
-    //         PmaProp::empty().owner(eid).permission(Permission::NONE),
-    //     );
-
-    //     // change shared page owner
-    //     let mut remain_pages = load_info.shared.size / 0x1000;
-    //     while remain_pages > 0 {
-    //         let page = VirtAddr(load_info.shared.ptr as usize + (remain_pages - 1) * 0x1000)
-    //             .translate(host_satp.ppn(), host_satp.mode(), &BarePtReader)
-    //             .unwrap();
-    //         self.pma_mgr.write().insert_page(
-    //             page,
-    //             PmaProp::empty()
-    //                 .owner(EnclaveId::EVERYONE)
-    //                 .permission(Permission::RWX),
-    //         );
-    //         remain_pages -= 1;
-    //     }
-
-    //     // create the enclave virtual memory allocator
-    //     let allocator = OneShotAllocatorWrapper(RefCell::new(OneShotAllocator::new(
-    //         host_satp.ppn(),
-    //         host_satp.mode(),
-    //         load_info.unused.start as usize,
-    //         load_info.unused.size - 0x1000,
-    //     )));
-    //     // we firstly allocate the stack and args page
-    //     let stack_ppn = allocator.alloc().unwrap();
-    //     let args_ppn = allocator.alloc().unwrap();
-    //     let serial_reg = self.device.uart.get_reg();
-
-    //     let (lue, vmm) = lue_builder(meta_page)
-    //         .eid(eid)
-    //         .host_info(HostInfo {
-    //             vaddr: load_info.mem.start.into(),
-    //             size: load_info.mem.page_num * 0x1000,
-    //             asid: host_satp.asid(),
-    //             shared_start: load_info.shared.ptr.into(),
-    //             shared_size: load_info.shared.size,
-    //             pt_root: host_satp.ppn().into(),
-    //             pt_mode: host_satp.mode(),
-    //         })
-    //         .prepare_vmm(allocator)
-    //         .create_trampoline(VirtAddr::from(load_info.rt.ptr))
-    //         // map runtime
-    //         .map_host_pages(
-    //             VirtPageNum::from_vaddr(load_info.rt.ptr),
-    //             VirtPageNum::from_vaddr(enc_rt_start),
-    //             rt_size / 0x1000,
-    //             PTEFlags::rwx(),
-    //         )
-    //         // map shared pages
-    //         .map_host_pages(
-    //             VirtPageNum::from_vaddr(load_info.shared.ptr),
-    //             VirtPageNum::from_vaddr(enc_share_start),
-    //             share_size / 0x1000,
-    //             PTEFlags::rwx(),
-    //         )
-    //         // map stack
-    //         .map_frame(
-    //             stack_ppn,
-    //             VirtPageNum::from_vaddr(stack_start),
-    //             PTEFlags::rwx(),
-    //         )
-    //         // map args
-    //         .map_frame(
-    //             args_ppn,
-    //             VirtPageNum::from_vaddr(boot_arg_addr),
-    //             PTEFlags::rwx(),
-    //         )
-    //         // map binary
-    //         .map_host_pages(
-    //             VirtPageNum::from_vaddr(load_info.bin.ptr),
-    //             VirtPageNum::from_vaddr(enc_bin_start),
-    //             load_info.bin.size.div_ceil(0x1000),
-    //             PTEFlags::rwx(),
-    //         )
-    //         // // map modules
-    //         // .map_mods(
-    //         //     VirtAddr::from(load_info.mods.as_ptr()),
-    //         //     mods_num,
-    //         //     VirtAddr(BIN_VADDR_START + align_up!(load_info.bin.size, 0x1000)),
-    //         // )
-    //         // FIXME: don't map mmio
-    //         .map_mmio(&serial_reg)
-    //         .finish();
-
-    //     // we link the remain free frames
-    //     let (head, free_size) = link_remain_frame(vmm, host_satp);
-
-    //     // then we construct the enclave boot arguments
-    //     use htee_channel::enclave::runtime::*;
-
-    //     let args = LueBootArgs {
-    //         mem: MemArg {
-    //             total_size: total_mem_size,
-    //         },
-    //         mods: ModArg {
-    //             start_vaddr: enc_mods_start,
-    //             num: 0,
-    //         },
-    //         tp: TpArg { addr: lue.tp },
-    //         bin: BinArg {
-    //             start: enc_bin_start,
-    //             size: bin_size,
-    //         },
-    //         shared: SharedArg {
-    //             enc_vaddr: enc_share_start,
-    //             host_vaddr: load_info.shared.ptr as usize,
-    //             size: share_size,
-    //         },
-    //         unmapped: UnmappedArg {
-    //             head: head,
-    //             size: free_size,
-    //         },
-    //         device: self.device.clone(),
-    //     };
-    //     log::debug!("boot args: {args}");
-
-    //     unsafe {
-    //         *(PhysAddr::from_ppn(args_ppn).0 as *mut LueBootArgs) = args;
-    //         lue.enclave_ctx.tregs.a1 = boot_arg_addr;
-    //     }
-
-    //     // add enclave to the list
-    //     self.lues.lock().push_node(lue.node.as_node_mut());
-
-    //     // clean current hart pmp
-    //     hart::current().clean_pmp();
-    //     log::debug!("clean current hart pmp");
-
-    //     Ok(lue.id)
-    // }
-
-    ///
-    // pub fn search_lue(&self, id: impl Into<EnclaveId>) -> Option<&mut LinuxUserEnclave> {
-    //     use enclave::node_to_node_ptr;
-
-    //     let id: EnclaveId = id.into();
-    //     self.lues.lock().iter().find_map(|node| {
-    //         let lue = unsafe { LinuxUserEnclave::from_node(node_to_node_ptr(node)) };
-    //         if lue.id == id { Some(lue) } else { None }
-    //     })
-    // }
-
-    // pub fn search_lde(&self, id: impl Into<EnclaveId>) -> Option<&mut LinuxDriverEnclave> {
-    //     use enclave::node_to_node_ptr;
-
-    //     let id: EnclaveId = id.into();
-    //     self.ldes.lock().iter().find_map(|node| {
-    //         let lde = unsafe { LinuxDriverEnclave::from_node(node_to_node_ptr(node)) };
-    //         if lde.id == id { Some(lde) } else { None }
-    //     })
-    // }
-
-    // pub fn launch_lde(&self, tregs: &mut TrapRegs) -> Result<!, Error> {
-    //     log::debug!("Launch LDE #{}", tregs.a0);
-    //     let sregs = SupervisorRegs::dump();
-    //     let enclave = self
-    //         .search_lde(tregs.a0)
-    //         .ok_or(Error::InvalidEnclaveId(tregs.a0))?;
-    //     enclave.host_ctx.sregs = sregs;
-    //     enclave.host_ctx.tregs = tregs.clone();
-    //     // set mepc to the next instruction
-    //     enclave.host_ctx.tregs.mepc += 0x2;
-
-    //     unsafe {
-    //         hart::current().enter_enclave(
-    //             enclave.idx(),
-    //             RT_VADDR_START,
-    //             mhartid::read(),
-    //             enclave.enclave_ctx.tregs.a1,
-    //             RT_VADDR_START,
-    //             enclave.enclave_ctx.sregs.satp,
-    //         )
-    //     }
-    // }
-
-    // pub fn launch_lue(&self, tregs: &mut TrapRegs) -> Result<!, Error> {
-    //     let sregs = SupervisorRegs::dump();
-    //     let enclave = self
-    //         .search_lue(tregs.a0)
-    //         .ok_or(Error::InvalidEnclaveId(tregs.a0))?;
-    //     enclave.host_ctx.sregs = sregs;
-    //     enclave.host_ctx.tregs = tregs.clone();
-    //     // set mepc to the next instruction
-    //     enclave.host_ctx.tregs.mepc += 0x2;
-
-    //     let arg0 = mhartid::read();
-    //     let arg1 = enclave.enclave_ctx.tregs.a1;
-
-    //     log::info!("Enclave {:#x} launching", enclave.id.0);
-    //     unsafe {
-    //         hart::current().enter_enclave(
-    //             enclave.idx(),
-    //             RT_VADDR_START,
-    //             arg0,
-    //             arg1,
-    //             RT_VADDR_START,
-    //             enclave.enclave_ctx.sregs.satp,
-    //         )
-    //     }
-    // }
-
-    // pub fn enter_lde(&self, tregs: &mut TrapRegs) -> Result<(), Error> {
-    //     let vaddr = tregs.mepc;
-    //     // find the enclave that matches the vaddr
-    //     let enc = self
-    //         .iter_lde()
-    //         .find(|e| e.match_lde(vaddr))
-    //         .ok_or(Error::InvalidLde)?;
-    //     // change enclave id, and let runtime to handle it
-    //     hart::current().set_enc(enc.idx());
-    //     // we clean current pmp registers
-    //     hart::current().clean_pmp();
-
-    //     // we save the host context to the enclave host context
-    //     enc.host_ctx.save(&tregs);
-
-    //     // the stvec is pre-configured when the lde is created
-    //     // we pass the illegal instruction exception to the sbi,
-    //     // so sbi will redirect to s-mode runtime
-    //     unsafe {
-    //         enc.enclave_ctx.sregs.write();
-    //     }
-
-    //     Ok(())
-    // }
-
-    // pub fn exit_lde(&self, tregs: &mut TrapRegs) -> Result<(), Error> {
-    //     if let Some(enc) = hart::current().get_enc_ptr() {
-    //         let enc = enc.as_lde().ok_or(Error::InvalidLde)?;
-    //         // for exit lde, it's no need to save the context
-    //         // we can use the lde inited context all the time
-    //         // // we save the host context to the enclave host context
-    //         // enc.enclave_ctx.save(&tregs);
-
-    //         // the stvec is pre-configured when the lde is created
-    //         // we pass the illegal instruction exception to the sbi,
-    //         // so sbi will redirect to s-mode runtime
-    //         unsafe {
-    //             enc.host_ctx.sregs.write();
-    //         }
-    //     } else {
-    //         return Err(Error::Other("Not need to exit lde"));
-    //     }
-
-    //     // change to the host
-    //     hart::current().set_enc(EnclaveIdx::HOST);
-    //     // clean current pmp registers
-    //     hart::current().clean_pmp();
-
-    //     Ok(())
-    // }
-
-    /// Determine if the exception is raised by the context switch.
-    ///
-    /// ## Detail
-    ///
-    /// The exception raised on following possiblities:
-    /// - Invalid access: vicious program access unowned memory area.
-    ///   In such situation, `mepc` pointer to memory address of vicious program,
-    ///   while `mtval` pointer to another memory address of protected program.
-    ///   In general, `mepc.owner` != `mtval.owner`, and `mtval.owner` != `current_owner`.
-    /// - Unconfigured physical memory area: `mtval` is allowed to access,
-    ///   but the physical memory area that contains `mtval` is not configured in pmp registers.
-    ///   In general, `mtval.owner` == `current_owner`.
-    /// - Context switch: when control flow translate to host OS, the exception raised,
-    ///   and the `mtval.owner` != `current_owner`.
-    // fn is_context_switch(&self, hartid: usize) -> bool {
-    //     todo!()
-    // }
-
-    // pub fn iter_lde(&self) -> impl Iterator<Item = &mut LinuxDriverEnclave> {
-    //     self.ldes.lock().iter().map(|node| {
-    //         let lde = unsafe { LinuxDriverEnclave::from_node(node_to_node_ptr(node)) };
-    //         lde
-    //     })
-    // }
-
-    // pub fn lock_mem(&self, user: EnclaveIdx, vaddr: usize, size: usize) -> Result<(), Error> {
-    //     use enclave::EncListNode;
-
-    //     if user == EnclaveIdx::HOST {
-    //         return Err(Error::Other("ELock from host is not allowed"));
-    //     }
-
-    //     let node = EncListNode::from_idx(user);
-    //     if node.is_user() {
-    //         return Err(Error::Other("ELock from user enclave is not allowed"));
-    //     }
-
-    //     let enclave = unsafe { LinuxDriverEnclave::from_idx(user) };
-    //     // we use the host satp to find the correct pma
-    //     let host_satp = enclave.host_ctx.sregs.satp;
-
-    //     if let Err(e) = self.change_pma_owner(
-    //         vaddr..(vaddr + size),
-    //         host_satp,
-    //         enclave.id,
-    //         Permission::RWX,
-    //         |prop| prop.get_owner() == EnclaveId::HOST || prop.get_owner() == enclave.id,
-    //     ) {
-    //         log::error!("{e}");
-    //         return Err(Error::Other(
-    //             "ELock resource owned by non-host is not allowed",
-    //         ));
-    //     };
-
-    //     Ok(())
-    // }
-
-    // pub fn free_mem(&self, user: EnclaveIdx, vaddr: usize, size: usize) -> Result<(), Error> {
-    //     use enclave::EncListNode;
-
-    //     if user == EnclaveIdx::HOST {
-    //         return Err(Error::Other("Efree from host is not allowed"));
-    //     }
-
-    //     let node = EncListNode::from_idx(user);
-    //     if node.is_user() {
-    //         return Err(Error::Other("Efree from user enclave is not allowed"));
-    //     }
-
-    //     let enclave = unsafe { LinuxDriverEnclave::from_idx(user) };
-    //     let host_satp = satp::read();
-
-    //     if let Err(e) = self.change_pma_owner(
-    //         vaddr..(vaddr + size),
-    //         host_satp,
-    //         enclave.id,
-    //         Permission::RWX,
-    //         |prop| prop.get_owner() == enclave.id,
-    //     ) {
-    //         log::error!("{e}");
-    //         return Err(Error::Other(
-    //             "Efree resource owned by other enclave is not allowed",
-    //         ));
-    //     };
-
-    //     Ok(())
-    // }
-
-    #[allow(unused)]
-    fn change_pma_owner(
-        &self,
-        region: Range<usize>,
-        satp: satp::Satp,
-        new_owner: EnclaveId,
-        new_perm: impl Into<Permission> + Copy,
-        mut check: impl FnMut(&PmaProp) -> bool,
-    ) -> Result<(), Error> {
-        let mut vaddr = region.start;
-        while vaddr < region.end {
-            let paddr = VirtAddr::from(vaddr)
-                .translate(satp.ppn(), satp.mode(), &BarePtReader)
-                .unwrap();
-            let pma = self.pma_mgr.read().get_pma(paddr.0).unwrap();
-            if !check(&pma.get_prop()) {
-                return Err(Error::Other("Failed to change pma owner"));
-            }
-            // update pma ownership
-            self.pma_mgr.write().insert_page(
-                paddr,
-                PmaProp::empty().owner(new_owner).permission(new_perm),
-            );
-            vaddr += 0x1000;
-        }
-
-        Ok(())
+}
+
+/// The caller should never use the content again
+unsafe fn clean_page_content(page: usize) {
+    let addr = page as *mut u8;
+    for i in 0..4096 {
+        unsafe { addr.add(i).write(0) };
     }
-
-    // pub fn ecall_request_read(
-    //     &self,
-    //     from: &mut LinuxDriverEnclave,
-    //     head: &mut Head,
-    //     tregs: &mut TrapRegs,
-    // ) -> Result<(), Error> {
-    //     use context::HartContext;
-
-    //     let from = from.id;
-    //     let to = EnclaveId::from(head.id as usize);
-
-    //     // check the owner of each paddr
-    //     // and update the owner to the receiver
-    //     for paddr in head.iter_paddr() {
-    //         let pma = self.pma_mgr.read().get_pma(paddr as usize).unwrap();
-    //         if pma.get_prop().get_owner() != from {
-    //             return Err(Error::Other("Failed to read from other enclave"));
-    //         }
-    //         self.pma_mgr
-    //             .write()
-    //             // the receiver is the owner of the paddr, and only allow to RW
-    //             .insert_page(
-    //                 paddr as usize,
-    //                 PmaProp::empty().owner(to).permission(Permission::RW),
-    //             );
-    //     }
-
-    //     // change the head page to the receiver, and only allow to read
-    //     self.pma_mgr.write().insert_page(
-    //         head as *const _ as usize,
-    //         PmaProp::empty().owner(to).permission(Permission::R),
-    //     );
-
-    //     // stash the caller context
-    //     let stash = unsafe { &mut *(head.stash as usize as *mut HartContext) };
-    //     stash.save(tregs);
-
-    //     // change id to the sender
-    //     head.id = from.0 as u64;
-
-    //     Ok(())
-    // }
-
-    // pub fn update_ctl_head(
-    //     &self,
-    //     from: &mut LinuxDriverEnclave,
-    //     head: &mut Head,
-    //     perm: impl Into<Permission> + Copy,
-    //     tregs: &mut TrapRegs,
-    // ) -> Result<(), Error> {
-    //     use context::HartContext;
-
-    //     let from = from.id;
-    //     let to = EnclaveId::from(head.id as usize);
-
-    //     // check the owner of each paddr
-    //     // and update the owner to the receiver
-    //     for paddr in head.iter_paddr() {
-    //         let pma = self.pma_mgr.read().get_pma(paddr as usize).unwrap();
-    //         if pma.get_prop().get_owner() != from {
-    //             return Err(Error::Other("Failed to read from other enclave"));
-    //         }
-    //         self.pma_mgr
-    //             .write()
-    //             // the receiver is the owner of the paddr, and only allow to RW
-    //             .insert_page(
-    //                 paddr as usize,
-    //                 PmaProp::empty().owner(to).permission(perm.into()),
-    //             );
-    //     }
-
-    //     // change the head page to the receiver, and only allow to read
-    //     self.pma_mgr.write().insert_page(
-    //         head as *const _ as usize,
-    //         PmaProp::empty().owner(to).permission(Permission::R),
-    //     );
-
-    //     // stash the caller context
-    //     let stash = unsafe { &mut *(head.stash as usize as *mut HartContext) };
-    //     stash.save(tregs);
-
-    //     // change id to the sender
-    //     head.id = from.0 as u64;
-
-    //     Ok(())
-    // }
-
-    // pub fn ecall_finish_ctl(
-    //     &self,
-    //     caller: &mut LinuxUserEnclave,
-    //     head: &mut Head,
-    //     res: usize,
-    //     tregs: &mut TrapRegs,
-    // ) -> Result<TrapRegs, Error> {
-    //     use context::HartContext;
-
-    //     let from = caller.id;
-    //     let to = EnclaveId::from(head.id as usize);
-
-    //     // check the owner of each paddr
-    //     // and update the owner back
-    //     for paddr in head.iter_paddr() {
-    //         let pma = self.pma_mgr.read().get_pma(paddr as usize).unwrap();
-    //         if pma.get_prop().get_owner() != from {
-    //             return Err(Error::Other("Failed to read from other enclave"));
-    //         }
-    //         self.pma_mgr.write().insert_page(
-    //             paddr as usize,
-    //             PmaProp::empty().owner(to).permission(Permission::RWX),
-    //         );
-    //     }
-
-    //     // change the head page back
-    //     self.pma_mgr.write().insert_page(
-    //         head as *const _ as usize,
-    //         PmaProp::empty().owner(to).permission(Permission::RWX),
-    //     );
-
-    //     // pop stash
-    //     let stash = unsafe { &mut *(head.stash as usize as *mut HartContext) };
-    //     let tregs = unsafe { stash.restore() };
-    //     assert_eq!(tregs.a0, head as *const _ as usize);
-
-    //     // change the result
-    //     head.id = res as u64;
-
-    //     Ok(tregs)
-    // }
 }

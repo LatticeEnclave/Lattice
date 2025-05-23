@@ -100,7 +100,7 @@ where
             pgd,
             BarePtWriter,
             allocator,
-            self.enclave.normal_satp.asid(),
+            self.enclave.nw_vma.satp.asid(),
             SV39,
         );
 
@@ -154,12 +154,12 @@ where
         log::debug!("map lse to {:#x}", vaddr.0);
         let vmm = self.enc_vmm.as_mut().unwrap();
 
-        let mut lse_addr = lse.data.rt_start;
+        let mut lse_addr = lse.data.vma.start;
         let mut target = vaddr.0;
-        while lse_addr < lse.data.rt_start + lse.data.rt_size {
+        while lse_addr < lse.data.vma.start + lse.data.vma.size {
             let ppn = PhysPageNum::from_paddr(
                 lse_addr
-                    .translate(lse.normal_satp.ppn(), lse.normal_satp.mode(), &BarePtReader)
+                    .translate(lse.nw_vma.satp.ppn(), lse.nw_vma.satp.mode(), &BarePtReader)
                     .unwrap(),
             );
             let vpn = VirtPageNum::from_vaddr(target);
@@ -192,8 +192,8 @@ where
 
         let vaddr: VirtAddr = vaddr.into();
         vaddr.translate(
-            self.enclave.normal_satp.ppn(),
-            self.enclave.normal_satp.mode(),
+            self.enclave.nw_vma.satp.ppn(),
+            self.enclave.nw_vma.satp.mode(),
             &BarePtReader,
         )
     }

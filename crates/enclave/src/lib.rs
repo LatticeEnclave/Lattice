@@ -1,36 +1,34 @@
 #![no_std]
 #![feature(never_type)]
 
-use builder::{EncBuilder, Setup};
+// use builder::{EncBuilder, Setup};
 use context::HartContext;
 use htee_console::log;
 use lue::LinuxUser;
-use perf::{PmpFaultRecord, TimeRecord};
+use perf::PmpFaultRecord;
 use pma::Owner;
-use riscv::{
-    asm::sfence_vma_all,
-    register::{mepc, mstatus, satp, sstatus},
-};
+use riscv::register::satp;
 use spin::Mutex;
-use vm::{
-    PAGE_SIZE, align_down, aligned,
-    allocator::FrameAllocator,
-    pm::{PhysAddr, PhysPageNum},
-    vm::VirtAddr,
-};
+use vm::{PAGE_SIZE, VirtMemArea, align_down, pm::PhysPageNum, vm::VirtAddr};
 
-use core::{arch::asm, fmt::Display, ops::Range, ptr::NonNull, sync::atomic::AtomicUsize};
+use core::{fmt::Display, ptr::NonNull, sync::atomic::AtomicUsize};
 
-mod builder;
-mod ctl;
-pub mod ecall;
+// mod builder;
+// mod ctl;
+// pub mod ecall;
+mod layout;
 mod lde;
 mod lse;
 mod lue;
 mod node;
 
+pub mod prelude {
+    // pub use crate::builder
+}
+
 // pub use lde::LinuxDriverEnclave;
-pub use builder::{Builder, link_remain_frame};
+// pub use builder::{Builder, link_remain_frame};
+pub use layout::Layout;
 pub use lse::{LinuxServiceEnclave, LinuxServiceEnclaveList};
 pub use lue::{LinuxUserEnclave, LinuxUserEnclaveList};
 pub use node::EncListNode;
@@ -46,6 +44,22 @@ impl EnclaveData for () {
     const TYPE: EnclaveType = EnclaveType::None;
 }
 
+pub fn create_lue_at(addr: usize, eid: EnclaveId) -> &'static mut LinuxUserEnclave {
+    let enc = Enclave::create_at(addr);
+    enc.list.lock().value = EnclaveType::User;
+    enc.nw_vma = enc.nw_vma.satp(satp::read());
+    enc.id = eid;
+    enc
+}
+
+pub fn create_lse_at(addr: usize, eid: EnclaveId) -> &'static mut LinuxServiceEnclave {
+    let enc = Enclave::create_at(addr);
+    enc.list.lock().value = EnclaveType::Service;
+    enc.nw_vma = enc.nw_vma.satp(satp::read());
+    enc.id = eid;
+    enc
+}
+
 /// Self reference
 #[repr(C)]
 pub struct Enclave<D: EnclaveData> {
@@ -53,9 +67,8 @@ pub struct Enclave<D: EnclaveData> {
 
     id: EnclaveId,
 
-    pub normal_region: Range<usize>,
-    pub normal_satp: satp::Satp,
-    pub normal_ctx: HartContext,
+    pub nw_vma: VirtMemArea,
+    pub nw_ctx: HartContext,
 
     pub tp: usize,
 
@@ -114,6 +127,7 @@ impl<D: EnclaveData> Enclave<D> {
 }
 
 impl Enclave<()> {
+    #[inline]
     pub fn as_enc<D: EnclaveData>(&self) -> Option<&'static mut Enclave<D>> {
         if self.get_type() == D::TYPE {
             let idx = self.idx();
@@ -122,6 +136,11 @@ impl Enclave<()> {
         } else {
             None
         }
+    }
+
+    #[inline]
+    pub fn as_lue(&self) -> Option<&'static mut Enclave<LinuxUser>> {
+        self.as_enc::<LinuxUser>()
     }
 }
 
@@ -137,16 +156,6 @@ impl Display for Error {
             Self::InvalidEnclaveId => write!(f, "Invalid enclave id"),
         }
     }
-}
-
-pub fn builder<A: FrameAllocator, D: EnclaveData + Setup>(
-    meta_page: PhysAddr,
-) -> EncBuilder<'static, D, A> {
-    let addr = meta_page.0;
-    let enclave = Enclave::create_at(addr);
-    enclave.list.lock().value = D::TYPE;
-    enclave.normal_satp = satp::read();
-    EncBuilder::new(enclave)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -278,90 +287,6 @@ impl Default for HostInfo {
             shared_size: 0,
             pt_root: PhysPageNum::INVALID,
             pt_mode: satp::Mode::Sv39,
-        }
-    }
-}
-
-mod allocator {
-    use core::cell::RefCell;
-
-    use htee_console::log;
-    use riscv::register::satp;
-    use vm::{allocator::FrameAllocator, prelude::*};
-
-    struct InnerAllocator {
-        pub root_ppn: usize,
-        pub mode: satp::Mode,
-        pub start: usize,
-        // pub size: usize,
-        pub end: usize,
-    }
-
-    impl InnerAllocator {
-        pub fn new(root_ppn: usize, mode: satp::Mode, start: usize, size: usize) -> Self {
-            Self {
-                root_ppn,
-                mode,
-                start,
-                // size
-                end: start + size,
-            }
-        }
-
-        pub fn alloc_vpage(&mut self) -> Option<usize> {
-            if self.start == self.end {
-                None
-            } else {
-                let val = self.start;
-                self.start += 0x1000;
-
-                log::trace!("one shot allocator alloc vpage: {:#x}", val);
-                Some(val)
-            }
-        }
-
-        pub fn alloc_frame(&mut self) -> Option<PhysPageNum> {
-            self.alloc_vpage()
-                .map(|addr| VirtAddr::from(addr))
-                .and_then(|vaddr| vaddr.translate(self.root_ppn, self.mode, &BarePtReader))
-                .map(|paddr| PhysPageNum::from_paddr(paddr))
-        }
-    }
-
-    pub struct BuilderAllocator {
-        inner: RefCell<InnerAllocator>,
-    }
-
-    impl BuilderAllocator {
-        pub fn new(root_ppn: usize, mode: satp::Mode, start: usize, size: usize) -> Self {
-            Self {
-                inner: RefCell::new(InnerAllocator::new(root_ppn, mode, start, size)),
-            }
-        }
-
-        pub fn start(&self) -> usize {
-            self.inner.borrow().start
-        }
-
-        pub fn size(&self) -> usize {
-            self.inner.borrow().end - self.inner.borrow().start
-        }
-    }
-
-    impl FrameAllocator for BuilderAllocator {
-        fn alloc(&self) -> Option<PhysPageNum> {
-            let ppn = self.inner.borrow_mut().alloc_frame()?;
-            let slice =
-                unsafe { core::slice::from_raw_parts_mut((ppn.0 * 0x1000) as *mut u8, 4096) };
-            for b in slice {
-                *b = 0;
-            }
-
-            Some(ppn)
-        }
-
-        fn dealloc(&self, _: PhysPageNum) {
-            unimplemented!()
         }
     }
 }

@@ -10,11 +10,23 @@ pub enum ProxyResult {
     Continue = 1,
 }
 
+// #[inline(always)]
+// pub fn trap_handle_proxy(f: impl Fn(&mut TrapRegs) -> ProxyResult) {
+//     struct Normal;
+
+//     impl TrapProxy for Normal {
+//         fn handle(regs: &mut TrapRegs) -> ProxyResult {
+//             f
+//         }
+//     }
+// }
+
 /// A common trap proxier wrapper.
 ///
 /// The trap proxier will mret if `handle` return
 pub trait TrapProxy {
     #[inline(always)]
+    #[repr(align(0x10))]
     fn proxy() -> ! {
         unsafe {
             Self::_enter();

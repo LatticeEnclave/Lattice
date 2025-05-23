@@ -7,6 +7,10 @@ fn parser_hex_str(raw: &str) -> usize {
     usize::from_str_radix(without_prefix, 16).unwrap()
 }
 
+fn parser_dec_str(raw: &str) -> usize {
+    usize::from_str_radix(raw, 10).unwrap()
+}
+
 #[proc_macro]
 pub fn usize_env_or(input: TokenStream) -> TokenStream {
     let parser = Punctuated::<Expr, Token![,]>::parse_terminated;
@@ -35,7 +39,13 @@ pub fn usize_env_or(input: TokenStream) -> TokenStream {
     // 读取环境变量
     let value = std::env::var(&env_var)
         .ok()
-        .map(|v| parser_hex_str(&v))
+        .map(|v| {
+            if v.starts_with("0x") {
+                parser_hex_str(&v)
+            } else {
+                parser_dec_str(&v)
+            }
+        })
         .unwrap_or(default_value);
 
     // 生成代码

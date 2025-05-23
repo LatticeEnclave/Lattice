@@ -46,8 +46,9 @@ pub mod client {
 
     use crate::info::LseInfo;
     #[inline(never)]
-    pub fn create_lse(info: *const LseInfo) -> usize {
+    pub fn create_lse(info: *const LseInfo) -> (usize, usize) {
         let rc;
+        let eidx;
         unsafe {
             asm!(
                 "unimp",
@@ -56,13 +57,14 @@ pub mod client {
                 in("a6") sbi::ecall::SBISMEnclaveCall::SbiSMCreateEnclave as usize,
                 in("a7") sbi::ecall::SBI_EXT_HTEE_ENCLAVE,
                 lateout("a0") rc,
+                lateout("a1") eidx,
                 lateout("a6") _,
                 lateout("a7") _,
                 options(nostack)
             )
         }
 
-        rc
+        (rc, eidx)
     }
 
     use crate::info::LdeInfo;

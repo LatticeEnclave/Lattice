@@ -109,12 +109,12 @@ pub fn pmas_req_vaddr<M: MemModel>(
 
 #[inline(always)]
 pub fn update_pmp_by_pmas(
-    pmas: &mut Vec<PmpHelper, MAX_PMP_COUNT>,
+    helpers: &mut Vec<PmpHelper, MAX_PMP_COUNT>,
     current_pmas: impl Iterator<Item = PhysMemArea>,
 ) {
     use pmp::flush_pmp;
 
-    let new_hps = gen_hart_pmp_status(pmas, current_pmas);
+    let new_hps = gen_hart_pmp_status(helpers, current_pmas);
     unsafe { flush_pmp(new_hps) }
 
     log::trace!("pmp register status:");

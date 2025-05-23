@@ -10,8 +10,11 @@ mod translate;
 pub mod vm;
 
 pub mod prelude {
-    pub use crate::{align_down, align_up};
-    pub use crate::{BarePtReader, PhysAddr, PhysPageNum, Translate, VirtAddr, VirtPageNum};
+    pub use crate::{align_down, align_up, aligned};
+    pub use crate::{
+        BarePtReader, PhysAddr, PhysPageNum, Translate, VirtAddr, VirtMemArea, VirtPageNum,
+    };
+    pub use crate::PAGE_SIZE;
 }
 
 pub use consts::*;
@@ -20,7 +23,7 @@ pub use page_table::{PageTableReader, PageTableWriter};
 pub use pm::{PhysAddr, PhysPageNum};
 use riscv::register::satp;
 pub use translate::{Translate, VAddrTranslator};
-pub use vm::{VirtAddr, VirtPageNum};
+pub use vm::{VirtAddr, VirtMemArea, VirtPageNum};
 
 #[macro_export]
 macro_rules! align_up {

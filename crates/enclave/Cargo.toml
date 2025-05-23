@@ -20,3 +20,4 @@ hsm = { path = "../hsm" }
 perf = { path = "../perf" }
 spin = { workspace = true }
 md5 = { version = "0.7.0", default-features = false }
+heapless = { workspace = true }

@@ -1,10 +1,7 @@
-use core::marker::PhantomData;
-
 use bit_field::BitField;
 use bitflags::bitflags;
 
 use crate::{
-    allocator::FrameAllocator,
     mm::{MemModel, SV48},
     pm::{PhysAddr, PhysPageNum},
 };
@@ -180,114 +177,10 @@ impl PageTable64 {
     }
 }
 
-/// Manager page table
-pub struct PageTableBuilder<W, M, A>
-where
-    W: PageTableWriter,
-    M: MemModel,
-    A: FrameAllocator,
-{
-    root: usize,
-    // a custome page table writer
-    writer: W,
-    frame_allocator: A,
-    _phantom: PhantomData<M>,
-}
-
-impl<W, M, A> PageTableBuilder<W, M, A>
-where
-    W: PageTableWriter,
-    M: MemModel,
-    A: FrameAllocator,
-{
-    pub fn new(root: usize, writer: W, frame_allocator: A, _: M) -> Self {
-        Self {
-            root,
-            writer,
-            frame_allocator,
-            _phantom: PhantomData::default(),
-        }
-    }
-
-    // pub fn find_or_create_pte(
-    //     &mut self,
-    //     vpn: impl Into<VirtPageNum>,
-    // ) -> Option<PageTableEntry> {
-    //     let vpns = M::split_vpn(vpn.into());
-
-    //     let mut pt = self.root;
-    //     let mut res = None;
-
-    //     for (i, idx) in vpns.into_iter().enumerate() {
-    //         let pte = self.writer.read(self.root, idx);
-
-    //         if i == M::LEVEL - 1 {
-    //             res = Some(pte);
-    //             break;
-    //         }
-
-    //         if !pte.is_valid() {
-    //             let ppn = self.frame_allocator.alloc().unwrap();
-    //             self.writer
-    //                 .write::<M>(pt.clone(), idx, PageTableEntry::new(ppn, PTEFlags::V));
-    //         }
-
-    //         pt = self.writer.next(pt, idx).unwrap();
-    //     }
-
-    //     res
-    // }
-
-    // pub fn find_pte(&mut self, vpn: impl Into<VirtPageNum>) -> Option<&mut PageTableEntry> {
-    //     let vpns = M::split_vpn(vpn.into());
-
-    //     let mut pt = self.root;
-    //     let mut res = None;
-
-    //     for (i, idx) in vpns.into_iter().enumerate() {
-    //         let pte = self.writer.get_mut(self.root, idx);
-
-    //         if i == M::LEVEL - 1 {
-    //             res = Some(pte);
-    //             break;
-    //         }
-
-    //         if !pte.is_valid() {
-    //             res = None;
-    //             break;
-    //         }
-
-    //         pt = self.writer.next(pt, idx).unwrap();
-    //     }
-
-    //     res
-    // }
-
-    // pub fn map(
-    //     &mut self,
-    //     vpn: impl Into<VirtPageNum>,
-    //     ppn: impl Into<PhysPageNum>,
-    //     flags: PTEFlags,
-    // ) {
-    //     let pte = self.find_or_create_pte(vpn.into()).unwrap();
-
-    //     *pte = PageTableEntry::new(ppn.into(), flags | PTEFlags::V)
-    // }
-
-    // take frame_allocator
-    pub fn finish(self) -> A {
-        self.frame_allocator
-    }
-}
-
 pub trait PageTableReader
 where
     Self: Sized,
 {
-    // fn get_mut(&mut self, pt: usize, idx: usize) -> &'static mut PageTableEntry;
-
-    // fn get(&self, pt: usize, idx: usize) -> &'static PageTableEntry;
-
     /// @pt: the ppn of page table
     fn read(&self, pt: usize, idx: usize) -> PageTableEntry;
 
@@ -326,7 +219,7 @@ impl PageTableWriter for BarePtWriter {
         PageTable::from_addr(pt * 0x1000).get_array_mut()[idx] = pte;
     }
 
-    fn clean<M: MemModel>(&mut self, pt: usize, idx: usize) -> PageTableEntry {
+    fn clean<M: MemModel>(&mut self, _: usize, _: usize) -> PageTableEntry {
         unimplemented!()
     }
 }

@@ -167,10 +167,10 @@ where
                 log::debug!("Launch enclave. Id: #{}", eid);
                 let sregs = SupervisorRegs::dump();
                 if let Some(enc) = sm.view(|list: &LinuxUserEnclaveList| list.get(eid)) {
-                    enc.normal_ctx.sregs = sregs;
-                    enc.normal_ctx.tregs = regs.clone();
+                    enc.nw_ctx.sregs = sregs;
+                    enc.nw_ctx.tregs = regs.clone();
                     // set mepc to the next instruction
-                    enc.normal_ctx.tregs.mepc += 0x2;
+                    enc.nw_ctx.tregs.mepc += 0x2;
 
                     enc.pmp_record.start();
 
@@ -214,7 +214,7 @@ where
                 log::debug!("restore pmp entires");
 
                 // save new context
-                enc.normal_ctx.save(&regs);
+                enc.nw_ctx.save(&regs);
                 // enc.data.host_ctx.save(&regs);
                 // enclave.save_host_ctx(&tregs);
                 debug_assert_ne!(enc.data.enc_ctx.sregs.satp, 0);
@@ -308,15 +308,15 @@ where
 
                 sm.update(|list: &mut LinuxUserEnclaveList| list.remove(owner));
                 // enc.normal_ctx.sregs.write_satp();
-                let satp = enc.normal_satp;
-                *regs = unsafe { enc.normal_ctx.restore() };
+                let satp = enc.nw_vma.satp;
+                *regs = unsafe { enc.nw_ctx.restore() };
                 // regs.a0 = EnclaveIdx::HOST.into();
 
                 // clean memory content
                 // SAFETY: it is safe to clean the enclave memory content by using host satp.
                 // 因为，如果操作系统去掉了某个页的映射，那SM就不会复原这个页的所有者，这会导致这个页永远也无法被访问。
-                let page_num = align_up!(enc.normal_region.len(), PAGE_SIZE) / PAGE_SIZE;
-                let vaddr = enc.normal_region.start;
+                let page_num = align_up!(enc.nw_vma.size, PAGE_SIZE) / PAGE_SIZE;
+                let vaddr = enc.nw_vma.start;
                 for i in 0..page_num {
                     let vaddr = VirtAddr::from(vaddr + i * PAGE_SIZE);
                     let paddr = vaddr

@@ -4,13 +4,7 @@ use bit_field::BitField;
 use riscv::register::satp;
 
 use crate::{
-    allocator::FrameAllocator,
-    consts::PAGE_SIZE,
-    mm::*,
-    page_table::{PTEFlags, PageTableEntry, PageTableReader},
-    pm::{PhysAddr, PhysPageNum},
-    translate::{Translate, VAddrTranslator},
-    PageTableWriter,
+    align_up, allocator::FrameAllocator, consts::PAGE_SIZE, mm::*, page_table::{PTEFlags, PageTableEntry}, pm::PhysPageNum, translate::Translate, PageTableWriter
 };
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -108,7 +102,60 @@ impl Step for VirtPageNum {
 }
 
 /// 连续的虚拟内存地址
-pub struct VirtMemArea;
+#[derive(Clone, Copy)]
+pub struct VirtMemArea {
+    pub start: usize,
+    pub size: usize,
+    pub flags: PTEFlags,
+    pub satp: satp::Satp,
+}
+
+impl Default for VirtMemArea {
+    fn default() -> Self {
+        Self {
+            start: 0,
+            size: 0,
+            flags: PTEFlags::empty(),
+            satp: satp::read(),
+        }
+    }
+}
+
+impl VirtMemArea {
+    #[inline]
+    pub fn start(mut self, start: impl Into<VirtAddr>) -> Self {
+        let start: VirtAddr = start.into();
+        self.start = start.0;
+        self
+    }
+
+    pub fn size(mut self, size: usize) -> Self {
+        self.size = size;
+        self
+    }
+
+    pub fn satp(mut self, satp: satp::Satp) -> Self {
+        self.satp = satp;
+        self
+    }
+
+    pub fn flags(mut self, flags: PTEFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    #[inline]
+    pub fn iter_vpn(&self) -> impl Iterator<Item = VirtPageNum> {
+        (self.start..(self.start + align_up!(self.size, PAGE_SIZE)))
+            .step_by(PAGE_SIZE)
+            .map(|addr| VirtPageNum::from_vaddr(addr))
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+}
 
 pub type Sv39VmMgr<W, A> = VirtMemMgr<W, A, SV39>;
 pub type Sv48VmMgr<W, A> = VirtMemMgr<W, A, SV48>;
@@ -180,10 +227,20 @@ impl<W: PageTableWriter, A: FrameAllocator, M: MemModel> VirtMemMgr<W, A, M> {
         }
     }
 
+    #[inline]
     pub fn alloc_new_page(&mut self, vpn: VirtPageNum, flags: PTEFlags) -> Option<PhysPageNum> {
         let ppn = self.frame_allocator.alloc()?;
         self.map_frame(vpn, ppn, flags);
         Some(ppn)
+    }
+
+    pub fn alloc_vma(&mut self, mut vma: VirtMemArea) -> Option<VirtMemArea> {
+        for vpn in vma.iter_vpn() {
+            let ppn = self.frame_allocator.alloc()?;
+            self.map_frame(vpn, ppn, vma.flags);
+        }
+        vma.satp = satp::Satp::from_bits(self.gen_satp());
+        Some(vma)
     }
 
     /// 取消一个物理页的映射，但不回收

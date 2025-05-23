@@ -12,5 +12,5 @@ error = []
 [dependencies]
 # htee_device = { path = "../htee_device" }
 htee_device = { workspace = true }
-uart = { path = "../../drivers/uart" }
+uart = { path = "../uart" }
 spin = "0.9"

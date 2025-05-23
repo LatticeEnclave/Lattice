@@ -3,7 +3,7 @@
 use core::{cell::UnsafeCell, ptr::NonNull};
 
 use heapless::Vec;
-use pmp::{PmpBuf, PmpHelper, PmpStatus, MAX_PMP_COUNT};
+use pmp::{MAX_PMP_COUNT, PmpBuf, PmpHelper};
 use riscv::{
     asm::sfence_vma_all,
     register::{mhartid, mstatus},
@@ -31,14 +31,16 @@ pub const MSTATUS_MPP: usize = 0x2 << MSTATUS_MPP_SHIFT;
 
 pub struct Hsm {
     hart_num: usize,
+    pmp_count: usize,
     all_harts: [UnsafeHartState; MAX_HART_NUM],
     ops: [Mutex<HartStateOps>; MAX_HART_NUM],
 }
 
 impl Hsm {
-    pub fn new(hart_num: usize) -> Self {
+    pub fn new(hart_num: usize, pmp_count: usize) -> Self {
         Self {
             hart_num,
+            pmp_count,
             all_harts: [DEFAULT_HART; MAX_HART_NUM],
             ops: [EMPTY_OP; MAX_HART_NUM],
         }
@@ -159,6 +161,11 @@ impl HartState {
     #[inline]
     pub fn clean_pmp(&self) {
         pmp::reset_pmp_registers();
+    }
+
+    #[inline]
+    pub fn in_nw(&self) -> bool {
+        self.priv_data_ptr == None
     }
 }
 

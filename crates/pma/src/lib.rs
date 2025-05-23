@@ -10,7 +10,7 @@ use nostd_rbtree::{NodePtr, RBTree, RBTreeAllocator, node_size};
 // use prop::Owner;
 use rbtree_ext::PmaExt;
 use riscv::register::satp;
-use vm::{BarePtReader, PhysPageNum, Translate, VirtAddr};
+use vm::{BarePtReader, PhysPageNum, Translate, VirtAddr, VirtMemArea};
 
 pub use prop::{Owner, PmaProp};
 
@@ -157,31 +157,21 @@ impl PhysMemAreaMgr {
         self.insert_pma(pma).unwrap();
     }
 
-    pub fn update_pma_by_vaddr(
-        &mut self,
-        vaddr: VirtAddr,
-        size: usize,
-        prop: PmaProp,
-        satp: satp::Satp,
-        check: impl Fn(Owner) -> bool,
-    ) {
-        let page_num = size.div_ceil(0x1000);
-        log::debug!("enclave memory range: {:#x}-{:#x}", vaddr.0, vaddr.0 + size);
-        let pt_ppn = PhysPageNum(satp.ppn());
-        let mode = satp.mode();
+    pub fn update_pma_by_vma(&mut self, vma: VirtMemArea, prop: PmaProp) {
+        // let page_num = vma.size.div_ceil(0x1000);
+        log::debug!(
+            "enclave memory range: {:#x}-{:#x}",
+            vma.start,
+            vma.start + vma.size
+        );
 
-        log::debug!("page table: {:#x}", pt_ppn.0);
-        (0..page_num)
-            .map(|i| vaddr.0 + i * 0x1000)
-            .filter_map(|vaddr| VirtAddr(vaddr).translate(pt_ppn, mode, &BarePtReader))
-            .for_each(|paddr| {
-                let pma = self.get_pma(paddr.0).unwrap();
-                let pma_owner = pma.get_prop().get_owner();
-                if !check(pma_owner) {
-                    panic!("page {:#x} does not pass the check", paddr.0);
-                }
-                self.insert_page(paddr, prop);
-            });
+        // log::debug!("page table: {:#x}", pt_ppn.0);
+        for vpn in vma.iter_vpn() {
+            let paddr = vpn
+                .translate(vma.satp.ppn(), vma.satp.mode(), &BarePtReader)
+                .unwrap();
+            self.insert_page(paddr, prop)
+        }
     }
 }
 
