@@ -1,1 +1,1 @@
-# Lattic
+# Lattice

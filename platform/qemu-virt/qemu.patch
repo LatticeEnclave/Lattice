@@ -1,0 +1,82 @@
+diff --git a/firmware/fw_base.S b/firmware/fw_base.S
+index b950c0b..686a475 100644
+--- a/firmware/fw_base.S
++++ b/firmware/fw_base.S
+@@ -721,3 +721,9 @@ fw_fdt_bin:
+ 	.fill FW_FDT_PADDING, 1, 0
+ #endif
+ #endif
++
++	.section .sm, "ax", %progbits
++	.align 4
++	.global sm_init
++sm_init:
++	.incbin SM_PATH
+\ No newline at end of file
+diff --git a/firmware/fw_base.ldS b/firmware/fw_base.ldS
+index fb47984..1da8eb6 100644
+--- a/firmware/fw_base.ldS
++++ b/firmware/fw_base.ldS
+@@ -24,6 +24,12 @@
+ 		PROVIDE(_text_end = .);
+ 	}
+ 
++	. = ALIGN(0x1000);
++	.sm :
++	{
++		*(.sm)
++	}
++
+ 	/* End of the code sections */
+ 
+ 	. = ALIGN(0x1000); /* Ensure next section is page aligned */
+diff --git a/firmware/objects.mk b/firmware/objects.mk
+index a90485d..cc5da1d 100644
+--- a/firmware/objects.mk
++++ b/firmware/objects.mk
+@@ -13,6 +13,10 @@ firmware-cflags-y +=
+ firmware-asflags-y +=
+ firmware-ldflags-y +=
+ 
++ifdef SM_PATH
++firmware-genflags-y += -DSM_PATH=\"$(SM_PATH)\"
++endif
++
+ ifdef FW_TEXT_START
+ firmware-genflags-y += -DFW_TEXT_START=$(FW_TEXT_START)
+ else
+diff --git a/lib/sbi/sbi_hart.c b/lib/sbi/sbi_hart.c
+index cc364fa..7cc7aab 100644
+--- a/lib/sbi/sbi_hart.c
++++ b/lib/sbi/sbi_hart.c
+@@ -26,6 +26,7 @@
+ 
+ extern void __sbi_expected_trap(void);
+ extern void __sbi_expected_trap_hext(void);
++extern void sm_init(unsigned long next_addr, unsigned long arg1);
+ 
+ void (*sbi_hart_expected_trap)(void) = &__sbi_expected_trap;
+ 
+@@ -1077,6 +1078,10 @@ sbi_hart_switch_mode(unsigned long arg0, unsigned long arg1,
+ 		}
+ 	}
+ 
++	sm_init(next_addr, arg1);
++	__builtin_unreachable();
++
++
+ 	register unsigned long a0 asm("a0") = arg0;
+ 	register unsigned long a1 asm("a1") = arg1;
+ 	__asm__ __volatile__("mret" : : "r"(a0), "r"(a1));
+diff --git a/lib/sbi/sbi_hsm.c b/lib/sbi/sbi_hsm.c
+index 3706acf..8bd2afa 100644
+--- a/lib/sbi/sbi_hsm.c
++++ b/lib/sbi/sbi_hsm.c
+@@ -157,6 +157,7 @@ void __noreturn sbi_hsm_hart_start_finish(struct sbi_scratch *scratch,
+ 	next_arg1 = scratch->next_arg1;
+ 	next_addr = scratch->next_addr;
+ 	next_mode = scratch->next_mode;
++	sbi_printf("hart %d started", hartid);
+ 	hsm_start_ticket_release(hdata);
+ 
+ 	sbi_hart_switch_mode(hartid, next_arg1, next_addr, next_mode, false);
