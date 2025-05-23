@@ -4,7 +4,7 @@ members = [
     "tests",
     "firmware/*",
     "crates/*",
-    "drivers/*", 
+    "platform/*",
 ]
 default-members = ["xtask"]
 resolver = "2"

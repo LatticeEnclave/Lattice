@@ -1,9 +1,8 @@
 use extension::Extension;
-use heapless::Vec;
 use htee_console::log;
 use pma::PhysMemAreaMgr;
 
-use crate::{PMP_COUNT, PmpRegGroup, PmpStatus};
+use crate::{PmpRegGroup, PmpStatus};
 
 pub struct Cache {
     entries: PmpRegGroup,

@@ -27,19 +27,6 @@ pub enum LogLevel {
     Trace = 4,
 }
 
-impl LogLevel {
-    const fn from_str(s: &str) -> Self {
-        return Self::Info;
-    }
-
-    const fn from_option(s: Option<&str>) -> Self {
-        match s {
-            Some(s) => Self::from_str(s),
-            None => Self::Info,
-        }
-    }
-}
-
 impl PartialEq for LogLevel {
     fn eq(&self, other: &Self) -> bool {
         (*self as usize) == (*other as usize)

@@ -31,16 +31,14 @@ pub const MSTATUS_MPP: usize = 0x2 << MSTATUS_MPP_SHIFT;
 
 pub struct Hsm {
     hart_num: usize,
-    pmp_count: usize,
     all_harts: [UnsafeHartState; MAX_HART_NUM],
     ops: [Mutex<HartStateOps>; MAX_HART_NUM],
 }
 
 impl Hsm {
-    pub fn new(hart_num: usize, pmp_count: usize) -> Self {
+    pub fn new(hart_num: usize) -> Self {
         Self {
             hart_num,
-            pmp_count,
             all_harts: [DEFAULT_HART; MAX_HART_NUM],
             ops: [EMPTY_OP; MAX_HART_NUM],
         }

@@ -227,34 +227,42 @@ impl SupervisorRegs {
 
     #[inline]
     pub unsafe fn write_stvec(&self) {
-        asm!(
-            "csrw stvec, {}",
-            in(reg) self.stvec,
-        )
+        unsafe {
+            asm!(
+                "csrw stvec, {}",
+                in(reg) self.stvec,
+            )
+        }
     }
 
     #[inline]
     pub unsafe fn write_sstatus(&self) {
-        asm!(
-            "csrw sstatus, {}",
-            in(reg) self.sstatus,
-        )
+        unsafe {
+            asm!(
+                "csrw sstatus, {}",
+                in(reg) self.sstatus,
+            )
+        }
     }
 
     #[inline]
     pub unsafe fn write_sie(&self) {
-        asm!(
-            "csrw sie, {}",
-            in(reg) self.sie,
-        )
+        unsafe {
+            asm!(
+                "csrw sie, {}",
+                in(reg) self.sie,
+            )
+        }
     }
 
     #[inline]
     pub unsafe fn write_sip(&self) {
-        asm!(
-            "csrw sip, {}",
-            in(reg) self.sip,
-        )
+        unsafe {
+            asm!(
+                "csrw sip, {}",
+                in(reg) self.sip,
+            )
+        }
     }
 }
 

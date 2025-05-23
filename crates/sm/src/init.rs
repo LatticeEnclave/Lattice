@@ -181,7 +181,7 @@ fn init_pma<P: Platform>(sm: &mut SecMonitor, platform: &P) {
 }
 
 fn init_hsm<P: Platform>(sm: &mut SecMonitor, platform: &P) {
-    let hsm = hsm::Hsm::new(platform.get_hart_num(), platform.get_pmp_count());
+    let hsm = hsm::Hsm::new(platform.get_hart_num());
     sm.hsm = hsm;
 }
 

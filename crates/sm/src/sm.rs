@@ -1,12 +1,12 @@
-use core::{ptr::NonNull, sync::atomic::AtomicUsize};
+use core::sync::atomic::AtomicUsize;
 
 use enclave::{Enclave, EnclaveId, EnclaveIdx, EnclaveType};
 use heapless::Vec;
-use hsm::{Hsm, MAX_HART_NUM};
-use htee_console::log;
+use hsm::Hsm;
+use htee_console::{log, println};
 use htee_device::device::Device;
 use pmp::{MAX_PMP_COUNT, PmpHelper};
-use riscv::register::*;
+use riscv::{asm::fence, register::*};
 use sbi::TrapRegs;
 use spin::{Mutex, RwLock};
 use trap_proxy::ProxyResult;
@@ -19,7 +19,7 @@ use vm::{
 };
 
 use crate::{
-    Error, PMP_COUNT, check_stack_overflow,
+    Error, check_stack_overflow,
     ecall::{EcallError, EcallResult},
     enclave::{Builder, BuilderAllocator, EnclaveMgr, lse, lue, measure_data},
     helper,
@@ -147,6 +147,7 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
     }
 
     fn reset_harts_pmp(&self) {
+        fence();
         for i in 0..self.hsm.num() {
             if i == mhartid::read() {
                 continue;
@@ -164,7 +165,9 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
     fn create_lue(&self, arg0: usize) -> Result<EcallResult, EcallError> {
         debug_assert_ne!(arg0, 0);
         let eid = self.enc_mgr.get_new_eid();
+        log::debug!("eid: {eid}");
         let userargs = lue::get_args(arg0);
+        log::debug!("user args:\n{userargs}");
 
         // the entire memory
         self.pma_mgr.write().update_pma_by_vma(
@@ -172,7 +175,7 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
             PmaProp::empty().owner(eid).permission(Permission::RWX),
         );
 
-        // meta page
+        // the first page is the meta page
         self.pma_mgr.write().update_pma_by_vma(
             VirtMemArea::default()
                 .start(userargs.mem.start as usize)
@@ -190,8 +193,24 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
 
         self.reset_harts_pmp();
 
+        #[cfg(debug_assertions)]
+        log::info!("{eid} owned pma:");
+        #[cfg(debug_assertions)]
+        self.pma_mgr
+            .read()
+            .iter_pma()
+            .filter(|pma| {
+                pma.get_prop().get_owner() == eid
+                    || pma.get_prop().get_owner() == EnclaveId::EVERYONE
+            })
+            .for_each(|pma| println!("{pma}"));
+
+        let md5 = measure_data(userargs.binary);
+        log::debug!("md5: {:#x}", md5);
+
         let lse = self.enc_mgr.get_lse(0).unwrap();
         let mut layout = lue::init_layout(&userargs, lse);
+        log::debug!("#{eid} layout:\n{layout}");
 
         let allocator = BuilderAllocator::new(
             VirtMemArea::default()
@@ -211,6 +230,8 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
 
         let enc = builder.create_lue(&userargs, eid);
         enc.nw_vma = userargs.mem;
+        enc.data.enc_ctx.sregs.satp = builder.vmm.gen_satp();
+        enc.data.enc_ctx.tregs.a0 = 0;
 
         // map trampoline
         let trampoline = builder.create_trampoline(lse.data.trampoline);
@@ -258,6 +279,7 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
     }
 
     fn create_lse(&self, arg0: usize) -> Result<EcallResult, EcallError> {
+        debug_assert_ne!(arg0, 0);
         let eid = self.enc_mgr.get_new_eid();
         log::debug!("eid: {eid}");
         let userargs = lse::get_user_args(arg0);
@@ -339,17 +361,20 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
             log::info!("enclave pause num: {}", enc.data.pause_num);
         }
 
-        log::info!("[SM] Cleaning enclave {}", owner);
+        log::info!("Cleaning enclave {}", owner);
 
         self.enc_mgr.rm_lue(owner);
         *regs = unsafe { enc.nw_ctx.restore() };
 
+        let nw_vma = enc.nw_vma;
+        // enclave will be cleaned
+        let _ = enc;
         // clean memory content
         // SAFETY: it is safe to clean the enclave memory content by using host satp.
         // 因为，如果操作系统去掉了某个页的映射，那SM就不会复原这个页的所有者，这会导致这个页永远也无法被访问。
-        for vpn in enc.nw_vma.iter_vpn() {
+        for vpn in nw_vma.iter_vpn() {
             let paddr = vpn
-                .translate(enc.nw_vma.satp.ppn(), enc.nw_vma.satp.mode(), &BarePtReader)
+                .translate(nw_vma.satp.ppn(), nw_vma.satp.mode(), &BarePtReader)
                 .unwrap();
             let pma = self.pma_mgr.read().get_pma(paddr).unwrap();
             let pma_owner = pma.get_prop().get_owner();
@@ -397,6 +422,7 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
 
         if let Some(enc) = self.enc_mgr.get_lue(eid) {
             args = lue::prepare_launch(enc, regs);
+            debug_assert_eq!(args.0, 0);
             addr = enclave::DEFAULT_RT_START;
             sp = enc.data.enc_ctx.tregs.sp;
             self.hsm.current().set_priv(enc.idx());
@@ -704,14 +730,14 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
             }
         }
 
-        update_pmp_by_pmas(buf, self.iter_current_pma());
+        update_pmp_by_pmas(buf, self.iter_ctx_pma());
 
         log::trace!("Updated pmp registers");
 
-        if idx.is_none() {
-            // update normal world cache
-            self.update_nw_pmp_cache();
-        }
+        // if idx.is_none() {
+        //     // update normal world cache
+        //     self.update_nw_pmp_cache();
+        // }
 
         let _ = idx
             .map(|idx| unsafe { Enclave::<()>::from_ptr(idx) })
@@ -735,32 +761,8 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
         }
     }
 
-    #[inline(always)]
-    pub fn init_pma(&mut self, f: impl FnOnce() -> PhysMemAreaMgr) {
-        let mgr = f();
-        self.pma_mgr = RwLock::new(mgr);
-    }
-
     #[inline]
-    pub fn init_heap(&mut self, start: *mut u8, size: usize) {
-        use pmp::PmpBuf;
-
-        type BufPool = Vec<PmpBuf, MAX_HART_NUM>;
-
-        assert!(aligned!(start as usize, 0x8));
-        assert!(core::mem::size_of::<BufPool>() <= size);
-        let mut ptr = NonNull::new(start as *mut BufPool).unwrap();
-        unsafe {
-            *ptr.as_mut() = Vec::new();
-            for (i, hs) in self.hsm.iter_hs_mut().enumerate() {
-                ptr.as_mut().push(Vec::new()).unwrap();
-                hs.pmp_buf = NonNull::new(ptr.as_mut().get_mut(i).unwrap()).unwrap()
-            }
-        }
-    }
-
-    #[inline]
-    pub fn iter_current_pma(&self) -> impl Iterator<Item = PhysMemArea> {
+    pub fn iter_ctx_pma(&self) -> impl Iterator<Item = PhysMemArea> {
         use pmp::iter_hps;
 
         iter_hps()
@@ -769,17 +771,12 @@ a0: {:#x}, a1: {:#x}, a2: {:#x}, ra:{:#x}, sp:{:#x}",
             .map(|r| self.pma_mgr.read().get_pma(r.start).unwrap())
     }
 
-    pub fn get_current_pmas(&self) -> Vec<PhysMemArea, PMP_COUNT> {
-        use pmp::hps_from_regs;
-
-        let hps = hps_from_regs();
-        let pmas = hps
-            .into_iter()
-            .map(|p| p.get_region())
-            .map(|r| self.pma_mgr.read().get_pma(r.start).unwrap())
-            .collect();
-        pmas
-    }
+    // #[inline]
+    // pub fn iter_enclave_pma(&self, eid: EnclaveId) -> impl Iterator<Item = PhysMemArea> {
+    //     self.pma_mgr.read().iter_pma().filter(|pma| {
+    //         pma.get_prop().get_owner() == eid || pma.get_prop().get_owner() == EnclaveId::EVERYONE
+    //     })
+    // }
 }
 
 /// The caller should never use the content again

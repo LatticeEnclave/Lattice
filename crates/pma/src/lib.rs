@@ -7,10 +7,8 @@ use core::{fmt::Display, ops::Range};
 
 use htee_console::log;
 use nostd_rbtree::{NodePtr, RBTree, RBTreeAllocator, node_size};
-// use prop::Owner;
 use rbtree_ext::PmaExt;
-use riscv::register::satp;
-use vm::{BarePtReader, PhysPageNum, Translate, VirtAddr, VirtMemArea};
+use vm::{BarePtReader, Translate, VirtMemArea};
 
 pub use prop::{Owner, PmaProp};
 

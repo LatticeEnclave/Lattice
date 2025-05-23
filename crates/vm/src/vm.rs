@@ -4,7 +4,14 @@ use bit_field::BitField;
 use riscv::register::satp;
 
 use crate::{
-    align_up, allocator::FrameAllocator, consts::PAGE_SIZE, mm::*, page_table::{PTEFlags, PageTableEntry}, pm::PhysPageNum, translate::Translate, PageTableWriter
+    align_up,
+    allocator::FrameAllocator,
+    consts::PAGE_SIZE,
+    mm::*,
+    page_table::{PTEFlags, PageTableEntry},
+    pm::PhysPageNum,
+    translate::Translate,
+    PageTableWriter,
 };
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -121,6 +128,16 @@ impl Default for VirtMemArea {
     }
 }
 
+impl Display for VirtMemArea {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!(
+            "{:#x}..{:#x}",
+            self.start,
+            self.start + self.size
+        ))
+    }
+}
+
 impl VirtMemArea {
     #[inline]
     pub fn start(mut self, start: impl Into<VirtAddr>) -> Self {
@@ -146,7 +163,7 @@ impl VirtMemArea {
 
     #[inline]
     pub fn iter_vpn(&self) -> impl Iterator<Item = VirtPageNum> {
-        (self.start..(self.start + align_up!(self.size, PAGE_SIZE)))
+        (self.start..align_up!(self.start + self.size, PAGE_SIZE))
             .step_by(PAGE_SIZE)
             .map(|addr| VirtPageNum::from_vaddr(addr))
     }
@@ -235,11 +252,11 @@ impl<W: PageTableWriter, A: FrameAllocator, M: MemModel> VirtMemMgr<W, A, M> {
     }
 
     pub fn alloc_vma(&mut self, mut vma: VirtMemArea) -> Option<VirtMemArea> {
+        vma.satp = satp::Satp::from_bits(self.gen_satp());
         for vpn in vma.iter_vpn() {
             let ppn = self.frame_allocator.alloc()?;
             self.map_frame(vpn, ppn, vma.flags);
         }
-        vma.satp = satp::Satp::from_bits(self.gen_satp());
         Some(vma)
     }
 

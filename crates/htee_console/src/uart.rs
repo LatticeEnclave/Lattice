@@ -1,7 +1,7 @@
 use crate::console::{Console, init_console};
 use core::mem::MaybeUninit;
 use htee_device::console::Uart;
-use spin::{Once, mutex::Mutex};
+use spin::mutex::Mutex;
 use uart::MmioUart;
 
 static UART: Mutex<MaybeUninit<MmioUart>> = Mutex::new(MaybeUninit::uninit());
@@ -36,11 +36,7 @@ impl Console for Device {
 }
 
 pub fn init_console_uart(uart: Uart) {
-    *UART.lock() = MaybeUninit::new(MmioUart::new(
-        uart.addr,
-        uart.reg_shift,
-        uart.reg_io_width,
-    ));
+    *UART.lock() = MaybeUninit::new(MmioUart::new(uart.addr, uart.reg_shift, uart.reg_io_width));
 
     // We don't need to init the UART here, because it's already done in the opensbi.
 

@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::{cell::RefCell, fmt::Display};
 use enclave::{
     EnclaveId, EnclaveIdGenerator, LinuxServiceEnclave, LinuxServiceEnclaveList, LinuxUserEnclave,
     LinuxUserEnclaveList,
@@ -30,6 +30,19 @@ pub struct UserArgs {
     pub binary: VirtMemArea,
     pub share: VirtMemArea,
     pub unused: VirtMemArea,
+}
+
+impl Display for UserArgs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!(
+            "memory:  {}
+runtime: {}
+binary:  {}
+share:   {}
+unused:  {}",
+            self.mem, self.rt, self.binary, self.share, self.unused
+        ))
+    }
 }
 
 pub struct EnclaveMgr {
@@ -82,7 +95,7 @@ impl Builder {
         userargs: &UserArgs,
         eid: EnclaveId,
     ) -> &'static mut LinuxUserEnclave {
-        // alloc meta page and update meta page ownership
+        // create enclave at first page
         let meta_page = VirtAddr(userargs.mem.start)
             .translate(
                 userargs.mem.satp.ppn(),
@@ -156,6 +169,7 @@ impl Builder {
     }
 
     pub fn map_vma(&mut self, src: VirtMemArea, dst: VirtMemArea) -> Option<VirtMemArea> {
+        let dst = dst.satp(satp::Satp::from_bits(self.vmm.gen_satp()));
         assert_eq!(src.size, dst.size);
         for (v_s, v_d) in src.iter_vpn().zip(dst.iter_vpn()) {
             let ppn = v_s
@@ -163,21 +177,21 @@ impl Builder {
                 .unwrap();
             self.vmm.map_frame(v_d, ppn.into(), dst.flags);
         }
-        let dst = dst.satp(satp::Satp::from_bits(self.vmm.gen_satp()));
         Some(dst)
     }
 
     pub fn alloc_vma(&mut self, vma: VirtMemArea) -> Option<VirtMemArea> {
+        let vma = vma.satp(satp::Satp::from_bits(self.vmm.gen_satp()));
         self.vmm.alloc_vma(vma)
     }
 
     pub fn map_frames(&mut self, ppn: PhysPageNum, vma: VirtMemArea) -> VirtMemArea {
+        let vma = vma.satp(satp::Satp::from_bits(self.vmm.gen_satp()));
         for (i, vpn) in vma.iter_vpn().enumerate() {
             let ppn = ppn.add(i);
             self.vmm.map_frame(vpn, ppn, vma.flags);
         }
 
-        let vma = vma.satp(satp::Satp::from_bits(self.vmm.gen_satp()));
         vma
     }
 }
@@ -316,15 +330,22 @@ pub mod lue {
 
     pub fn init_layout(args: &UserArgs, lse: &LinuxServiceEnclave) -> enclave::Layout {
         let mut layout = enclave::Layout::default();
-        layout.binary.size = align_up!(args.binary.size, PAGE_SIZE);
-        layout.rt.size = align_up!(lse.data.rt.size, PAGE_SIZE);
-        layout.share.start = layout.binary.start + layout.binary.size;
-        layout.share.size = align_up!(args.share.size, PAGE_SIZE);
+        // layout.binary.size = align_up!(args.binary.size, PAGE_SIZE);
+        layout.binary.size = args.binary.size;
+        // layout.rt.size = align_up!(lse.data.rt.size, PAGE_SIZE);
+        layout.rt.size = lse.data.rt.size;
+        layout.share.start = align_up!(layout.binary.start + layout.binary.size, PAGE_SIZE);
+        // layout.share.size = align_up!(args.share.size, PAGE_SIZE);
+        layout.share.size = args.share.size;
         layout.bootargs.size = PAGE_SIZE;
 
         debug_assert_eq!(
             args.mem.size,
-            layout.rt.size + layout.binary.size + layout.share.size + args.unused.size + 0x1000
+            align_up!(layout.rt.size, PAGE_SIZE)
+                + align_up!(layout.binary.size, PAGE_SIZE)
+                + align_up!(layout.share.size, PAGE_SIZE)
+                + align_up!(args.unused.size, PAGE_SIZE)
+                + 0x1000
         );
 
         layout

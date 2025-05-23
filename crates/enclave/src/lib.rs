@@ -13,11 +13,7 @@ use vm::{PAGE_SIZE, VirtMemArea, align_down, pm::PhysPageNum, vm::VirtAddr};
 
 use core::{fmt::Display, ptr::NonNull, sync::atomic::AtomicUsize};
 
-// mod builder;
-// mod ctl;
-// pub mod ecall;
 mod layout;
-mod lde;
 mod lse;
 mod lue;
 mod node;

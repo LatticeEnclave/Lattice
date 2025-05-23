@@ -7,7 +7,7 @@ use crate::PmaInfo;
 pub trait PmaExt {
     fn get_node_pma_ext(&self, addr: usize) -> Option<NodePtr<usize, PmaInfo>>;
     fn get_key_value_pma_ext(&self, addr: usize) -> Option<(&usize, &PmaInfo)>;
-    fn get_prev_node_pma_ext(&self, addr: usize) -> Option<NodePtr<usize, PmaInfo>>;
+    // fn get_prev_node_pma_ext(&self, addr: usize) -> Option<NodePtr<usize, PmaInfo>>;
 }
 
 impl PmaExt for RBTree<usize, PmaInfo> {
@@ -51,8 +51,8 @@ impl PmaExt for RBTree<usize, PmaInfo> {
             .map(|node| unsafe { (&(*node.0).key, &(*node.0).value) })
     }
 
-    fn get_prev_node_pma_ext(&self, addr: usize) -> Option<NodePtr<usize, PmaInfo>> {
-        let a = 1..=2;
-        todo!()
-    }
+    // fn get_prev_node_pma_ext(&self, addr: usize) -> Option<NodePtr<usize, PmaInfo>> {
+    //     let a = 1..=2;
+    //     todo!()
+    // }
 }
