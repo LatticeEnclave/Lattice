@@ -2,7 +2,7 @@ use core::{ops::Range, sync::atomic::AtomicPtr};
 
 use fdt::Fdt;
 use hsm::MAX_HART_NUM;
-use htee_device::device::{DeviceInfo, MemRegion};
+use device::device::{DeviceInfo, MemRegion};
 use riscv::register::Permission;
 use sbi::TrapRegs;
 use spin::Once;

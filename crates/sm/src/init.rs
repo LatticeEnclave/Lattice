@@ -6,8 +6,8 @@ use core::{
 
 use clint::ClintClient;
 use hsm::MAX_HART_NUM;
-use htee_console::{init_console_uart, log};
-use htee_device::device::{Device, DeviceInfo};
+use console::{init_console_uart, log};
+use device::device::{Device, DeviceInfo};
 use pma::{Owner, PhysMemArea, PhysMemAreaMgr, PmaProp};
 use pmp::PmpStatus;
 use riscv::register::{Permission, mepc, mhartid, mstatus, mtvec, stvec};

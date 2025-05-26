@@ -5,7 +5,7 @@ use crate::{
     lse::{LinuxService, LinuxServiceEnclave},
     lue::LinuxUser,
 };
-use htee_console::log;
+use console::log;
 use riscv::register::satp;
 use vm::{
     Translate,

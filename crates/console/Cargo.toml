@@ -1,0 +1,15 @@
+[package]
+name = "console"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+debug = []
+info = []
+trace = []
+error = []
+
+[dependencies]
+device = { workspace = true }
+uart = { path = "../uart" }
+spin = "0.9"

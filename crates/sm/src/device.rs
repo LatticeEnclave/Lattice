@@ -2,7 +2,7 @@ use crate::Error;
 use core::ops::Range;
 use core::slice;
 use fdt::{Fdt, node::FdtNode};
-use htee_console::log;
+use console::log;
 
 /// Device information parsered from fdt.
 ///

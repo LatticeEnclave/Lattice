@@ -3,7 +3,7 @@
 
 // use builder::{EncBuilder, Setup};
 use context::HartContext;
-use htee_console::log;
+use console::log;
 use lue::LinuxUser;
 use perf::PmpFaultRecord;
 use pma::Owner;

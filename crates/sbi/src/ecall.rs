@@ -16,7 +16,7 @@ const SBI_EXT_HSM_HART_GET_STATUS: usize = 0x2;
 const SBI_EXT_IPI: usize = 0x735049;
 const SBI_EXT_IPI_SEND_IPI: usize = 0x0;
 
-pub const SBI_EXT_HTEE_ENCLAVE: usize = 0x08abcdef;
+pub const SBI_EXT_TEE_ENCLAVE: usize = 0x08abcdef;
 
 // Enclave stop reasons requested
 pub const STOP_TIMER_INTERRUPT: usize = 0;
@@ -549,7 +549,7 @@ pub fn sbi_unimp_3(
 #[inline(never)]
 pub fn sbi_exit_enclave(retval: usize) -> (isize, isize) {
     sbi_call_1(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMExitEnclave as usize,
         retval,
     )

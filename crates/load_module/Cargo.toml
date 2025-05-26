@@ -15,5 +15,5 @@ riscv = { workspace = true }
 spin = { workspace = true }
 # buddy_system_allocator = "0.9.1"
 # rand_core = { version = "0.6.4", default-features = false }
-htee_console = { workspace = true }
+console = { workspace = true }
 elf = { path = "../elf" }

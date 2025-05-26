@@ -2,7 +2,7 @@ use core::mem;
 
 use crate::{log, println};
 use alloc::collections::btree_map::Values;
-use htee_vstack::{ArgRegs, Vstack};
+use vstack::{ArgRegs, Vstack};
 
 use crate::{
     consts::{SHARED_MEMORY_REGION_SIZE, USER_BUFFER},

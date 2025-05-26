@@ -4,7 +4,7 @@
 
 use core::mem::MaybeUninit;
 
-use htee_console::println;
+use console::println;
 use riscv::{asm::wfi, register::mscratch};
 
 pub use init::init;

@@ -50,9 +50,4 @@ impl PmaExt for RBTree<usize, PmaInfo> {
         self.get_node_pma_ext(addr)
             .map(|node| unsafe { (&(*node.0).key, &(*node.0).value) })
     }
-
-    // fn get_prev_node_pma_ext(&self, addr: usize) -> Option<NodePtr<usize, PmaInfo>> {
-    //     let a = 1..=2;
-    //     todo!()
-    // }
 }

@@ -24,7 +24,7 @@ use mem::{sys_brk, sys_mmap, sys_mprotect, sys_munmap};
 pub use misc::RandGenerator;
 use misc::{sys_getrandom, sys_uname};
 use sbi::ecall::{
-    sbi_call_1, sbi_unimp_1, sbi_unimp_2, sbi_unimp_3, SBISMEnclaveCall, SBI_EXT_HTEE_ENCLAVE,
+    sbi_call_1, sbi_unimp_1, sbi_unimp_2, sbi_unimp_3, SBISMEnclaveCall, SBI_EXT_TEE_ENCLAVE,
 };
 use task::sys_getpid;
 use time::{sys_clock_gettime, sys_gettimeofday};
@@ -33,7 +33,7 @@ use crate::log;
 
 pub fn sbi_exit_enclave(retval: usize) -> (isize, isize) {
     sbi_call_1(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMExitEnclave as usize,
         retval,
     )
@@ -41,19 +41,15 @@ pub fn sbi_exit_enclave(retval: usize) -> (isize, isize) {
 
 pub fn sbi_stop_enclave(request: usize) -> (isize, isize) {
     sbi_call_1(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMStopEnclave as usize,
         request,
     )
 }
 
-// pub fn sbi_lde_stop_enclave() -> ! {
-//     sbi_call_0(SBI_EXT_HTEE_ENCLAVE, SBISMEnclaveCall::SbiSMLdeStopEnclave as usize)
-// }
-
 pub fn sbi_open_channel(request1: usize, request2: usize) -> (isize, isize) {
     sbi_unimp_2(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMChannelOpen as usize,
         request1,
         request2,
@@ -62,7 +58,7 @@ pub fn sbi_open_channel(request1: usize, request2: usize) -> (isize, isize) {
 
 pub fn sbi_close_channel(request: usize) -> (isize, isize) {
     sbi_unimp_1(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMChannelClose as usize,
         request,
     )
@@ -70,7 +66,7 @@ pub fn sbi_close_channel(request: usize) -> (isize, isize) {
 
 pub fn sbi_recv_channel(request: usize) -> (isize, isize) {
     sbi_unimp_1(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMChannelConnect as usize,
         request,
     )
@@ -78,7 +74,7 @@ pub fn sbi_recv_channel(request: usize) -> (isize, isize) {
 
 pub fn sbi_copy_from_user(to: usize, from: usize, size: usize) -> (isize, isize) {
     sbi_unimp_3(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMCopyFromLue as usize,
         to,
         from,
@@ -88,7 +84,7 @@ pub fn sbi_copy_from_user(to: usize, from: usize, size: usize) -> (isize, isize)
 
 pub fn sbi_copy_to_user(to: usize, from: usize, size: usize) -> (isize, isize) {
     sbi_unimp_3(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMCopyToLue as usize,
         to,
         from,
@@ -98,7 +94,7 @@ pub fn sbi_copy_to_user(to: usize, from: usize, size: usize) -> (isize, isize) {
 
 pub fn sbi_copy_from_kernel(to: usize, from: usize, size: usize) -> (isize, isize) {
     sbi_unimp_3(
-        SBI_EXT_HTEE_ENCLAVE,
+        SBI_EXT_TEE_ENCLAVE,
         SBISMEnclaveCall::SbiSMCopyFromKernel as usize,
         to,
         from,

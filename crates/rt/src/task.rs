@@ -1,7 +1,7 @@
 use core::{mem::offset_of, ops::DerefMut, ptr::NonNull, slice::SliceIndex};
 use alloc::collections::btree_map::Entry;
 use data_structure::linked_list::{self, Node};
-use htee_vstack::Vstack;
+use vstack::Vstack;
 use spin::mutex::Mutex;
 use vm::vm::{Sv39VmMgr, VirtMemMgr};
 

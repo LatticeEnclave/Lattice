@@ -5,7 +5,7 @@ mod rbtree_ext;
 
 use core::{fmt::Display, ops::Range};
 
-use htee_console::log;
+use console::log;
 use nostd_rbtree::{NodePtr, RBTree, RBTreeAllocator, node_size};
 use rbtree_ext::PmaExt;
 use vm::{BarePtReader, Translate, VirtMemArea};

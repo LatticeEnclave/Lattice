@@ -1,0 +1,5 @@
+/target
+/*.asm
+/opensbi
+/tests/c_test
+/build

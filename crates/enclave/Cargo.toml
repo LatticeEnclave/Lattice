@@ -5,9 +5,9 @@ edition = "2024"
 
 [dependencies]
 data_structure = { workspace = true }
-htee_console = { workspace = true }
-htee_device = { workspace = true }
-htee_channel = { workspace = true }
+console = { workspace = true }
+device = { workspace = true }
+channel = { workspace = true }
 riscv = { workspace = true }
 vm = { workspace = true }
 sbi = { workspace = true }

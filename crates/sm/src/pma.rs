@@ -1,8 +1,8 @@
 use bit_field::BitField;
 use core::{cmp::Ordering, fmt::Display, ops::Range, slice};
 use enclave::EnclaveId;
-use htee_console::{log, println};
-use htee_device::device::MemRegion;
+use console::{log, println};
+use device::device::MemRegion;
 use nostd_rbtree::{NodePtr, RBTree, RBTreeAllocator, node_size};
 
 use riscv::register::Permission;

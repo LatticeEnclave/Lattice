@@ -1,0 +1,11 @@
+[package]
+name = "channel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vstack = { path = "../vstack"}
+sbi = { path = "../sbi"}
+heapless = { workspace = true }
+device = { workspace = true }
+elf = { path = "../elf" }

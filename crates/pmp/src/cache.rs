@@ -1,5 +1,5 @@
 use extension::Extension;
-use htee_console::log;
+use console::log;
 use pma::PhysMemAreaMgr;
 
 use crate::{PmpRegGroup, PmpStatus};

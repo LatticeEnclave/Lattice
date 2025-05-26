@@ -1,7 +1,7 @@
 use core::{fmt, ops::Range};
 use heapless::Vec;
-use htee_console::log;
-use htee_macro::usize_env_or;
+use console::log;
+use macros::usize_env_or;
 use riscv::{
     asm::sfence_vma_all,
     register::{Permission, Pmp, pmpcfg0, pmpcfg2},

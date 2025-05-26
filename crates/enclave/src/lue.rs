@@ -1,5 +1,5 @@
 use data_structure::linked_list::LinkedList;
-use htee_console::log;
+use console::log;
 
 use context::HartContext;
 

@@ -7,5 +7,5 @@ edition = "2024"
 riscv = { workspace = true }
 bit_field = { workspace = true }
 vm = { path = "../vm" }
-htee_console = { path = "../htee_console" }
+console = { path = "../console" }
 nostd-rbtree = { path = "../nostd-rbtree" }

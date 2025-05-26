@@ -2,8 +2,8 @@
 
 use core::ops::Range;
 
-use htee_console::println;
-use htee_macro::usize_env_or;
+use console::println;
+use macros::usize_env_or;
 use riscv::register::Permission;
 
 pub trait Platform {

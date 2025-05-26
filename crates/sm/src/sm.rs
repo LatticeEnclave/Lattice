@@ -3,8 +3,8 @@ use core::sync::atomic::AtomicUsize;
 use enclave::{Enclave, EnclaveId, EnclaveIdx, EnclaveType};
 use heapless::Vec;
 use hsm::Hsm;
-use htee_console::{log, println};
-use htee_device::device::Device;
+use console::{log, println};
+use device::device::Device;
 use pmp::{MAX_PMP_COUNT, PmpHelper};
 use riscv::{asm::fence, register::*};
 use sbi::TrapRegs;
@@ -85,11 +85,11 @@ impl SecMonitor {
         exception: mcause::Exception,
         regs: &mut TrapRegs,
     ) -> Result<ProxyResult, Error> {
-        use sbi::ecall::SBI_EXT_HTEE_ENCLAVE;
+        use sbi::ecall::SBI_EXT_TEE_ENCLAVE;
 
         let res = match exception {
             mcause::Exception::IllegalInstruction => {
-                if regs.a7 == SBI_EXT_HTEE_ENCLAVE && mtval::read() == 0 {
+                if regs.a7 == SBI_EXT_TEE_ENCLAVE && mtval::read() == 0 {
                     // unimp width
                     self.handle_ecall(regs, 0x2)
                 } else {
@@ -109,7 +109,7 @@ impl SecMonitor {
             mcause::Exception::Breakpoint => ProxyResult::Continue,
             // handle the ecall from S-mode ecall
             mcause::Exception::SupervisorEnvCall => {
-                if regs.a7 == SBI_EXT_HTEE_ENCLAVE {
+                if regs.a7 == SBI_EXT_TEE_ENCLAVE {
                     // ecall instruction length
                     self.handle_ecall(regs, 0x4)
                 } else {

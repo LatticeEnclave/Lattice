@@ -4,7 +4,7 @@
 mod symbol;
 
 pub use elf::Sections;
-use htee_console::log;
+use console::log;
 pub use symbol::SymbolTable;
 
 // 第三方依赖
@@ -13,7 +13,6 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-// use htee_console::log;
 
 // use crate::rt::ldesyms::{add_symbol, get_symbol_table};
 use xmas_elf::sections::{SectionData, SectionHeader, ShType};

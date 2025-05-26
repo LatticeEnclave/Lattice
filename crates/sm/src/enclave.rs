@@ -1,21 +1,21 @@
+use console::log;
 use core::{cell::RefCell, fmt::Display};
 use enclave::{
     EnclaveId, EnclaveIdGenerator, LinuxServiceEnclave, LinuxServiceEnclaveList, LinuxUserEnclave,
     LinuxUserEnclaveList,
 };
-use htee_console::log;
 use riscv::register::satp;
 use spin::Mutex;
 use vm::{
-    PAGE_SIZE,
     allocator::FrameAllocator,
     page_table::{BarePtWriter, PTEFlags},
     prelude::*,
     trans_direct,
     vm::Sv39VmMgr,
+    PAGE_SIZE,
 };
 
-pub const EXT_ID: usize = sbi::ecall::SBI_EXT_HTEE_ENCLAVE;
+pub const EXT_ID: usize = sbi::ecall::SBI_EXT_TEE_ENCLAVE;
 pub const CREATE_ENC: usize = sbi::ecall::SBISMEnclaveCall::SbiSMCreateEnclave as usize;
 pub const DESTROY_ENC: usize = sbi::ecall::SBISMEnclaveCall::SbiSMDestroyEnclave as usize;
 pub const LAUNCH_ENC: usize = sbi::ecall::SBISMEnclaveCall::SbiSMRunEnclave as usize;
@@ -197,7 +197,7 @@ impl Builder {
 }
 
 pub mod lse {
-    use htee_channel::h2e::LseInfo;
+    use channel::h2e::LseInfo;
     use riscv::register::satp;
     use vm::prelude::*;
 
@@ -225,11 +225,11 @@ pub mod lse {
 }
 
 pub mod lue {
+    use channel::h2e::LueInfo;
+    use console::log;
     use context::SupervisorRegs;
+    use device::device::Device;
     use enclave::{Layout, LinuxServiceEnclave, LinuxUserEnclave};
-    use htee_channel::h2e::LueInfo;
-    use htee_console::log;
-    use htee_device::device::Device;
     use riscv::register::satp;
     use sbi::TrapRegs;
     use vm::prelude::*;
@@ -288,7 +288,7 @@ pub mod lue {
         unused_size: usize,
         device: Device,
     ) {
-        use htee_channel::enclave::runtime::*;
+        use channel::enclave::runtime::*;
 
         let paddr = bootargs_vma
             .start

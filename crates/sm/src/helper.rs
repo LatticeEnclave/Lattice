@@ -1,5 +1,5 @@
 use heapless::Vec;
-use htee_console::log;
+use console::log;
 use vm::{
     BarePtReader, PhysAddr, PhysPageNum, Translate, VAddrTranslator, mm::MemModel, vm::VirtPageNum,
 };

@@ -15,10 +15,10 @@ sbi = { path = "../sbi" }
 data_structure = { path = "../data_structure" }
 nostd-rbtree = { path = "../nostd-rbtree" }
 vm = { path = "../vm" }
-htee_channel = { path = "../htee_channel" }
-htee_macro = { path = "../htee_macro" }
-htee_device = { path = "../htee_device" }
-htee_console = { path = "../htee_console"}
+channel = { path = "../channel" }
+macros = { path = "../macros" }
+device = { path = "../device" }
+console = { path = "../console"}
 context = { workspace = true }
 enclave = { path = "../enclave" }
 fdt = "0.1.5"

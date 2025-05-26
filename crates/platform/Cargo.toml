@@ -7,5 +7,5 @@ edition = "2024"
 riscv = { workspace = true }
 pmp = { path = "../pmp" }
 sbi = { path = "../sbi" }
-htee_console = { path = "../htee_console" }
-htee_macro = { path = "../htee_macro" }
+console = { path = "../console" }
+macros = { path = "../macros" }

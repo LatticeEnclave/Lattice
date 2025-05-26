@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 riscv = { workspace = true }
 heapless = { workspace = true }
-htee_console = { path = "../htee_console" }
+console = { path = "../console" }
 pma = { path = "../pma" }
-htee_macro = { path = "../htee_macro" }
+macros = { path = "../macros" }
 extension = { path = "../extension" }
