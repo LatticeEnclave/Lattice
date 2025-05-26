@@ -18,7 +18,6 @@ device = { path = "../device" }
 riscv = { workspace = true }
 spin = "0.9.8"
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
-# sbi-rt = { version = "0.0.2", features = ["legacy"] }
 buddy_system_allocator = "0.9.1"
 rand_core = {version = "0.6.4", default-features = false } 
 channel = { workspace = true }

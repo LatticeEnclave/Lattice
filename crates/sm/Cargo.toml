@@ -28,7 +28,6 @@ spin = "0.9.8"
 bit_field = "0.10.2"
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
 heapless = { workspace = true }
-# extension = { path = "../extension" }
 pma = { path = "../pma" }
 clint = { path = "../clint" }
 hsm = { path = "../hsm" }

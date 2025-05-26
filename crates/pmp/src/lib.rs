@@ -1,15 +1,15 @@
 #![no_std]
 
+use console::log;
 use core::{fmt, ops::Range};
 use heapless::Vec;
-use console::log;
 use macros::usize_env_or;
 use riscv::register::{Permission, pmpaddr, pmpcfg, pmpentry};
 
 use pma::PhysMemArea;
 
 mod cache;
-pub use {cache::Cache, cache::NwCache, cache::NwCacheExt};
+pub use {cache::Cache, cache::NwCache};
 
 pub const MAX_PMP_COUNT: usize = 32;
 pub const PMP_COUNT: usize = usize_env_or!("PMP_COUNT", 16);

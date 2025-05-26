@@ -9,4 +9,3 @@ heapless = { workspace = true }
 console = { path = "../console" }
 pma = { path = "../pma" }
 macros = { path = "../macros" }
-extension = { path = "../extension" }

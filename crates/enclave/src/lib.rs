@@ -1,7 +1,6 @@
 #![no_std]
 #![feature(never_type)]
 
-// use builder::{EncBuilder, Setup};
 use context::HartContext;
 use console::log;
 use lue::LinuxUser;

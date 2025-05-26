@@ -12,7 +12,6 @@ riscv = { workspace = true }
 vm = { workspace = true }
 sbi = { workspace = true }
 context = { workspace = true }
-extension = { path = "../extension" }
 pma = { path = "../pma" }
 pmp = { path = "../pmp" }
 clint = { path = "../clint" }

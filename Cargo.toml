@@ -1,19 +1,17 @@
 [workspace]
 members = [
-    "xtask",
     "tests",
-    "firmware/*",
+    "runtime",
     "crates/*",
-    "platform/*",
+    "platform/*", 
 ]
-default-members = ["xtask"]
 resolver = "2"
 
 [workspace.dependencies]
 bit_field = "0.10.2"
-htee_device = { path = "crates/htee_device" }
-htee_console = { path = "crates/htee_console" }
-htee_channel = { path = "crates/htee_channel" }
+device = { path = "crates/device" }
+console = { path = "crates/console" }
+channel = { path = "crates/channel" }
 vm = { path = "crates/vm" }
 sbi = { path = "crates/sbi" }
 data_structure = { path = "crates/data_structure" }

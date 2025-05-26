@@ -1,4 +1,3 @@
-use extension::Extension;
 use console::log;
 use pma::PhysMemAreaMgr;
 
@@ -42,23 +41,3 @@ impl NwCache {
         self.cache.restore();
     }
 }
-
-pub trait NwCacheExt: Extension<PhysMemAreaMgr> + Extension<NwCache> {
-    #[inline]
-    fn update_nw_pmp_cache(&self) {
-        self.update(|nw_cache: &mut NwCache| {
-            nw_cache.clear();
-            for pmp in crate::iter_hps() {
-                nw_cache.push(pmp);
-            }
-        })
-    }
-
-    #[inline]
-    fn apply_nw_pmp_cache(&self) {
-        log::debug!("apply nw pmp cache");
-        self.view(|nw_cache: &NwCache| nw_cache.restore())
-    }
-}
-
-impl<T> NwCacheExt for T where T: Extension<PhysMemAreaMgr> + Extension<NwCache> {}
